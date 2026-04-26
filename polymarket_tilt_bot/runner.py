@@ -43,7 +43,12 @@ class PaperTradingBot:
         try:
             cycle = 0
             while self.config.runtime.cycles <= 0 or cycle < self.config.runtime.cycles:
-                self.step()
+                try:
+                    self.step()
+                except ApiError as exc:
+                    LOGGER.warning("cycle skipped after recoverable API error: %s", exc)
+                except Exception:
+                    LOGGER.exception("cycle skipped after unexpected error")
                 cycle += 1
                 total = "unlimited" if self.config.runtime.cycles <= 0 else str(self.config.runtime.cycles)
                 LOGGER.info("cycle %s/%s complete", cycle, total)

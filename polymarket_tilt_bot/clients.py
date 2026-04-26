@@ -26,7 +26,10 @@ class HttpClient:
         self.session.headers.update({"User-Agent": self.config.user_agent})
 
     def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
-        response = self.session.get(url, params=params, timeout=self.config.request_timeout)
+        try:
+            response = self.session.get(url, params=params, timeout=self.config.request_timeout)
+        except requests.RequestException as exc:
+            raise ApiError(f"GET {url} failed: {exc}") from exc
         if response.status_code >= 400:
             raise ApiError(f"GET {response.url} -> {response.status_code}: {response.text[:300]}")
         return response.json()
