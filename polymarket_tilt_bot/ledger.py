@@ -288,3 +288,7 @@ class SQLiteLedger:
                 "roi": total_pnl / total_cost if total_cost else 0.0,
             },
         }
+
+    def realized_pnl(self) -> float:
+        rows = self.conn.execute("SELECT result_json FROM resolutions").fetchall()
+        return sum(float(json.loads(row["result_json"])["pnl"]) for row in rows)

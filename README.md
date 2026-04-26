@@ -61,6 +61,19 @@ Every cycle, the bot logs the current Polymarket odds and your paper position:
 state btc-updown-5m-... odds up_bid=0.520 up_ask=0.540 down_bid=0.460 down_ask=0.480 signal=Up p_up=0.631 pos_up=10.00 pos_down=8.00 cost=9.50 unpaired=Up 2.00
 ```
 
+It also logs paper account state every cycle:
+
+```text
+account balance=940.00 equity=1003.24 realized_pnl=10.34 unrealized_pnl=-7.10 reserved=70.34 open_positions=1
+```
+
+Definitions:
+
+- `balance`: starting simulation balance + realized PnL - capital reserved in unresolved paper positions.
+- `equity`: starting simulation balance + realized PnL + mark-to-market unrealized PnL.
+- `reserved`: paper cost still locked in unresolved markets.
+- `unrealized_pnl`: estimated open-position value using current Polymarket best bids.
+
 The bot records:
 
 - `markets`

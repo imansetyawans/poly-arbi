@@ -76,6 +76,7 @@ class PaperTradingBot:
                 LOGGER.warning("market %s skipped: %s", market.slug, exc)
 
         self._try_resolve_finished_positions()
+        self._log_account_state()
 
     def _trade_market(self, market: Market, timestamp: float) -> None:
         tick = self.window.latest(market.asset)
@@ -145,6 +146,51 @@ class PaperTradingBot:
             position.unpaired_side,
             position.unpaired_shares,
         )
+
+    def _log_account_state(self) -> None:
+        positions = self._open_positions()
+        reserved = sum(position.total_cost for position in positions)
+        unrealized = self._estimate_unrealized_pnl(positions)
+        realized = self.ledger.realized_pnl()
+        balance = self.config.risk.starting_balance + realized - reserved
+        equity = self.config.risk.starting_balance + realized + unrealized
+        LOGGER.info(
+            "account balance=%.2f equity=%.2f realized_pnl=%.2f unrealized_pnl=%.2f reserved=%.2f open_positions=%s",
+            balance,
+            equity,
+            realized,
+            unrealized,
+            reserved,
+            len(positions),
+        )
+
+    def _open_positions(self):
+        open_positions = []
+        seen = {position.market_slug: position for position in self.positions.all_positions()}
+        for stored_position in self.ledger.get_unresolved_positions():
+            seen.setdefault(stored_position.market_slug, stored_position)
+        for position in seen.values():
+            if position.total_cost > 0 and not self.ledger.is_resolved(position.market_slug):
+                open_positions.append(position)
+        return open_positions
+
+    def _estimate_unrealized_pnl(self, positions) -> float:
+        total = 0.0
+        for position in positions:
+            market = self._market_from_position(position.market_slug)
+            if market is None:
+                total -= position.total_cost
+                continue
+            try:
+                books = self.clob.get_books_for_market(market)
+            except ApiError:
+                total -= position.total_cost
+                continue
+            up_bid = books["Up"].best_bid or 0.0
+            down_bid = books["Down"].best_bid or 0.0
+            mark_value = position.shares["Up"] * up_bid + position.shares["Down"] * down_bid
+            total += mark_value - position.total_cost
+        return total
 
 
 def parse_assets(raw: str) -> tuple[Literal["BTC", "ETH"], ...]:

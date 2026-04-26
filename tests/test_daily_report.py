@@ -14,6 +14,7 @@ def test_daily_report_summarizes_resolved_positions(tmp_path) -> None:
 
         report = ledger.daily_report("2026-04-26")
         resolved = ledger.is_resolved("m1")
+        realized = ledger.realized_pnl()
     finally:
         ledger.close()
 
@@ -21,6 +22,7 @@ def test_daily_report_summarizes_resolved_positions(tmp_path) -> None:
     assert resolved is True
     assert report["summary"]["wins"] == 1
     assert report["summary"]["total_pnl"] == 6
+    assert realized == 6
     assert report["markets"][0]["winner"] == "Up"
 
 
