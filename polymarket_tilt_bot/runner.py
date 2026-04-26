@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Literal
 
-from .clients import ApiError, ClobClient, CoinGeckoPriceClient, GammaClient, HttpClient
+from .clients import ApiError, BinanceWebSocketPriceClient, ClobClient, GammaClient, HttpClient
 from .config import BotConfig, RiskConfig, RuntimeConfig, StrategyConfig
 from .ledger import PositionBook, SQLiteLedger
 from .market_scanner import MarketScanner
@@ -26,7 +26,7 @@ class PaperTradingBot:
         self.http = HttpClient(config.runtime)
         self.gamma = GammaClient(self.http)
         self.clob = ClobClient(self.http)
-        self.prices = CoinGeckoPriceClient(self.http)
+        self.prices = BinanceWebSocketPriceClient(config.runtime.assets)
         self.scanner = MarketScanner(self.gamma)
         self.resolver = ResolutionClient(self.gamma)
         self.strategy = HedgedTiltStrategy(config.strategy, config.risk)
@@ -84,6 +84,8 @@ class PaperTradingBot:
         position = self.positions.get(market)
         signal = self.strategy.build_signal(market, tick, self.window)
         self.ledger.record_signal(signal, timestamp)
+        self.ledger.record_orderbooks(market, books, timestamp)
+        self._log_market_state(market, books, position, signal)
         intents = self.strategy.propose_orders(market, position, signal, books)
         for intent in intents:
             fill = self.broker.execute(market, intent, books[intent.outcome], timestamp)
@@ -119,6 +121,25 @@ class PaperTradingBot:
         event = self.gamma.get_event_by_slug(slug)
         return self.gamma.parse_crypto_market(event, asset) if event else None
 
+    def _log_market_state(self, market: Market, books, position, signal) -> None:
+        up_book = books["Up"]
+        down_book = books["Down"]
+        LOGGER.info(
+            "state %s odds up_bid=%s up_ask=%s down_bid=%s down_ask=%s signal=%s p_up=%.3f pos_up=%.2f pos_down=%.2f cost=%.2f unpaired=%s %.2f",
+            market.slug,
+            _fmt(up_book.best_bid),
+            _fmt(up_book.best_ask),
+            _fmt(down_book.best_bid),
+            _fmt(down_book.best_ask),
+            signal.direction,
+            signal.probability_up,
+            position.shares["Up"],
+            position.shares["Down"],
+            position.total_cost,
+            position.unpaired_side,
+            position.unpaired_shares,
+        )
+
 
 def parse_assets(raw: str) -> tuple[Literal["BTC", "ETH"], ...]:
     assets: list[Literal["BTC", "ETH"]] = []
@@ -144,6 +165,10 @@ def build_config(args: argparse.Namespace) -> BotConfig:
     )
     strategy = StrategyConfig()
     return BotConfig(runtime=runtime, risk=risk, strategy=strategy)
+
+
+def _fmt(value: float | None) -> str:
+    return "None" if value is None else f"{value:.3f}"
 
 
 def main(argv: list[str] | None = None) -> int:

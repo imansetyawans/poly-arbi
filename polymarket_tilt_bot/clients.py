@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import requests
+import websocket
 
 from .config import RuntimeConfig
 from .models import BookLevel, CryptoTick, Market, OrderBook
@@ -128,3 +130,59 @@ class CoinGeckoPriceClient:
             if coin_id in data and "usd" in data[coin_id]:
                 self._cache[asset] = CryptoTick(asset=asset, price=float(data[coin_id]["usd"]), timestamp=timestamp, source="coingecko")
         self._cache_ts = timestamp
+
+
+class BinanceWebSocketPriceClient:
+    SYMBOL_BY_ASSET: dict[Literal["BTC", "ETH"], str] = {"BTC": "btcusdt", "ETH": "ethusdt"}
+
+    def __init__(self, assets: tuple[Literal["BTC", "ETH"], ...]) -> None:
+        self.assets = assets
+        self._ticks: dict[Literal["BTC", "ETH"], CryptoTick] = {}
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        streams = "/".join(f"{self.SYMBOL_BY_ASSET[asset]}@trade" for asset in assets)
+        self.url = f"wss://data-stream.binance.vision/stream?streams={streams}"
+        self._thread = threading.Thread(target=self._run_forever, name="binance-price-ws", daemon=True)
+        self._thread.start()
+
+    def get_tick(self, asset: Literal["BTC", "ETH"], wait_seconds: float = 5.0) -> CryptoTick:
+        if asset not in self._ticks:
+            self._ready.wait(wait_seconds)
+        with self._lock:
+            tick = self._ticks.get(asset)
+        if tick is None:
+            raise ApiError(f"no Binance websocket tick received for {asset} yet")
+        return tick
+
+    def _run_forever(self) -> None:
+        while True:
+            ws = websocket.WebSocketApp(
+                self.url,
+                on_message=self._on_message,
+                on_error=lambda _ws, err: None,
+                on_close=lambda _ws, _code, _msg: None,
+            )
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+            time.sleep(2)
+
+    def _on_message(self, _ws: websocket.WebSocketApp, message: str) -> None:
+        tick = self.parse_message(message)
+        if tick is None:
+            return
+        with self._lock:
+            self._ticks[tick.asset] = tick
+            if all(asset in self._ticks for asset in self.assets):
+                self._ready.set()
+
+    @classmethod
+    def parse_message(cls, message: str) -> CryptoTick | None:
+        payload = json.loads(message)
+        stream = payload.get("stream", "")
+        data = payload.get("data") or {}
+        symbol = str(data.get("s") or stream.split("@", 1)[0]).lower()
+        asset = next((asset for asset, stream_symbol in cls.SYMBOL_BY_ASSET.items() if stream_symbol == symbol), None)
+        if asset is None or data.get("p") is None:
+            return None
+        timestamp_ms = data.get("T") or data.get("E")
+        timestamp = float(timestamp_ms) / 1000.0 if timestamp_ms else time.time()
+        return CryptoTick(asset=asset, price=float(data["p"]), timestamp=timestamp, source="binance_ws")

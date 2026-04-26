@@ -83,6 +83,18 @@ class SQLiteLedger:
                 reason TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS orderbook_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market_slug TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                token_id TEXT NOT NULL,
+                best_bid REAL,
+                best_ask REAL,
+                bid_depth REAL NOT NULL,
+                ask_depth REAL NOT NULL,
+                timestamp REAL NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS resolutions (
                 market_slug TEXT PRIMARY KEY,
                 winner TEXT NOT NULL,
@@ -160,6 +172,31 @@ class SQLiteLedger:
                 1 if fill.simulated else 0,
                 fill.reason,
             ),
+        )
+        self.conn.commit()
+
+    def record_orderbooks(self, market: Market, books: dict[Literal["Up", "Down"], object], timestamp: float) -> None:
+        rows = []
+        for outcome, book in books.items():
+            rows.append(
+                (
+                    market.slug,
+                    outcome,
+                    book.token_id,
+                    book.best_bid,
+                    book.best_ask,
+                    sum(level.size for level in book.bids),
+                    sum(level.size for level in book.asks),
+                    timestamp,
+                )
+            )
+        self.conn.executemany(
+            """
+            INSERT INTO orderbook_snapshots (
+                market_slug, outcome, token_id, best_bid, best_ask, bid_depth, ask_depth, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
         )
         self.conn.commit()
 
