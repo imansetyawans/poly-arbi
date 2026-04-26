@@ -86,7 +86,8 @@ class HedgedTiltStrategy:
             wanted = target_cost[outcome] - position.cost[outcome]
             remaining_budget = self.risk.max_market_notional - position.total_cost
             notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
-            if notional < market.min_order_size:
+            estimated_shares = notional / ask if ask else 0.0
+            if estimated_shares < market.min_order_size:
                 continue
 
             is_tilt_side = outcome == signal.direction and signal.confidence >= self.strategy.min_confidence_to_tilt

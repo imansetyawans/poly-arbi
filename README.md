@@ -126,6 +126,8 @@ The defaults are deliberately small:
 - no new entries in the final 15 seconds
 - live execution is not implemented
 
+For small-balance paper tests, `$1-$2` single fills are supported when the order would still meet the market's minimum share size. For example, `$2` at `0.20` odds buys about `10` shares, while `$2` at `0.80` odds buys only `2.5` shares and may be skipped.
+
 ## Tests
 
 ```powershell

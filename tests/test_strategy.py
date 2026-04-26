@@ -51,3 +51,31 @@ def test_strategy_blocks_expensive_pair_hedge() -> None:
     intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.55), "Down": book("down", 0.60)})
 
     assert all(intent.outcome != "Down" for intent in intents)
+
+
+def test_strategy_allows_small_notional_when_minimum_share_size_is_met() -> None:
+    strategy = HedgedTiltStrategy(StrategyConfig(), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.1, 1160, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.8), "Down": book("down", 0.2)})
+
+    assert any(intent.outcome == "Down" and intent.max_notional == 2 for intent in intents)
+
+
+def test_strategy_rejects_small_notional_when_minimum_share_size_is_not_met() -> None:
+    strategy = HedgedTiltStrategy(StrategyConfig(), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.1, 1160, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.8), "Down": book("down", 0.7)})
+
+    assert not intents
