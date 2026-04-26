@@ -37,6 +37,24 @@ Use `--cycles 0` to run continuously until you stop it with `Ctrl+C`:
 python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades.sqlite --balance 1000 --max-market-notional 100 --max-single-fill 10
 ```
 
+## Resolution And Daily PnL
+
+The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. It records the winning outcome and PnL decomposition in the `resolutions` table.
+
+Print a report for all resolved markets:
+
+```powershell
+python -m polymarket_tilt_bot daily-report --db paper_trades.sqlite
+```
+
+Print a UTC-date filtered report:
+
+```powershell
+python -m polymarket_tilt_bot daily-report --db paper_trades.sqlite --date 2026-04-26
+```
+
+The report includes total cost, total PnL, ROI, winner, paired hedge PnL, and unpaired tilt PnL per market.
+
 Every cycle, the bot logs the current Polymarket odds and your paper position:
 
 ```text

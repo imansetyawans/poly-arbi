@@ -211,3 +211,73 @@ class SQLiteLedger:
         )
         self.conn.commit()
         return result
+
+    def get_unresolved_positions(self) -> list[Position]:
+        rows = self.conn.execute(
+            """
+            SELECT f.market_slug, f.condition_id, f.outcome, f.price, f.size, f.notional
+            FROM fills f
+            LEFT JOIN resolutions r ON r.market_slug = f.market_slug
+            WHERE r.market_slug IS NULL
+            ORDER BY f.timestamp
+            """
+        ).fetchall()
+        positions: dict[str, Position] = {}
+        for row in rows:
+            position = positions.setdefault(row["market_slug"], Position(row["market_slug"], row["condition_id"]))
+            position.shares[row["outcome"]] += row["size"]
+            position.cost[row["outcome"]] += row["notional"]
+        return list(positions.values())
+
+    def daily_report(self, day_prefix: str | None = None) -> dict[str, object]:
+        where = ""
+        params: tuple[object, ...] = ()
+        if day_prefix:
+            where = "WHERE datetime(r.timestamp, 'unixepoch') LIKE ?"
+            params = (f"{day_prefix}%",)
+        rows = self.conn.execute(
+            f"""
+            SELECT r.market_slug, r.winner, r.result_json, r.timestamp
+            FROM resolutions r
+            {where}
+            ORDER BY r.timestamp
+            """,
+            params,
+        ).fetchall()
+        markets = []
+        total_pnl = 0.0
+        total_cost = 0.0
+        wins = 0
+        losses = 0
+        for row in rows:
+            result = json.loads(row["result_json"])
+            pnl = float(result["pnl"])
+            cost = float(result["total_cost"])
+            total_pnl += pnl
+            total_cost += cost
+            wins += pnl > 0
+            losses += pnl < 0
+            markets.append(
+                {
+                    "market_slug": row["market_slug"],
+                    "winner": row["winner"],
+                    "pnl": pnl,
+                    "cost": cost,
+                    "paired_pnl": float(result["paired_pnl"]),
+                    "unpaired_side": result["unpaired_side"],
+                    "unpaired_pnl": float(result["unpaired_pnl"]),
+                    "up_shares": float(result["up_shares"]),
+                    "down_shares": float(result["down_shares"]),
+                }
+            )
+        return {
+            "markets": markets,
+            "summary": {
+                "resolved_markets": len(markets),
+                "wins": wins,
+                "losses": losses,
+                "total_pnl": total_pnl,
+                "total_cost": total_cost,
+                "roi": total_pnl / total_cost if total_cost else 0.0,
+            },
+        }

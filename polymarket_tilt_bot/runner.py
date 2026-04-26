@@ -52,6 +52,7 @@ class PaperTradingBot:
         except KeyboardInterrupt:
             LOGGER.info("stopped by user")
         finally:
+            self._try_resolve_finished_positions()
             self.close()
 
     def step(self) -> None:
@@ -104,7 +105,10 @@ class PaperTradingBot:
 
     def _try_resolve_finished_positions(self) -> None:
         now = time.time()
-        for position in self.positions.all_positions():
+        seen = {position.market_slug: position for position in self.positions.all_positions()}
+        for stored_position in self.ledger.get_unresolved_positions():
+            seen.setdefault(stored_position.market_slug, stored_position)
+        for position in seen.values():
             if position.total_cost <= 0:
                 continue
             market = self._market_from_position(position.market_slug)
@@ -184,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-market-notional", type=float, default=100.0)
     run.add_argument("--max-single-fill", type=float, default=10.0)
 
+    report = sub.add_parser("daily-report", help="Print resolved paper PnL report from SQLite")
+    report.add_argument("--db", default="paper_trades.sqlite")
+    report.add_argument("--date", default=None, help="UTC date prefix, e.g. 2026-04-26. Omit for all resolved markets.")
+
     scan = sub.add_parser("scan-once", help="Print currently tradable crypto 5m markets")
     scan.add_argument("--assets", type=parse_assets, default=("BTC", "ETH"), help="BTC, ETH, or BTC,ETH")
 
@@ -202,6 +210,28 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.db).parent.mkdir(parents=True, exist_ok=True) if Path(args.db).parent != Path(".") else None
         bot = PaperTradingBot(build_config(args))
         bot.run()
+        return 0
+
+    if args.command == "daily-report":
+        ledger = SQLiteLedger(args.db)
+        try:
+            report_data = ledger.daily_report(args.date)
+        finally:
+            ledger.close()
+        summary = report_data["summary"]
+        print(f"Resolved markets: {summary['resolved_markets']}")
+        print(f"Wins/Losses: {summary['wins']}/{summary['losses']}")
+        print(f"Total cost: ${summary['total_cost']:.2f}")
+        print(f"Total PnL: ${summary['total_pnl']:.2f}")
+        print(f"ROI: {summary['roi'] * 100:.2f}%")
+        print("")
+        print("market,winner,pnl,cost,paired_pnl,unpaired_side,unpaired_pnl,up_shares,down_shares")
+        for row in report_data["markets"]:
+            print(
+                f"{row['market_slug']},{row['winner']},{row['pnl']:.4f},{row['cost']:.4f},"
+                f"{row['paired_pnl']:.4f},{row['unpaired_side']},{row['unpaired_pnl']:.4f},"
+                f"{row['up_shares']:.4f},{row['down_shares']:.4f}"
+            )
         return 0
 
     return 1
