@@ -212,6 +212,13 @@ class SQLiteLedger:
         self.conn.commit()
         return result
 
+    def is_resolved(self, market_slug: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM resolutions WHERE market_slug = ? LIMIT 1",
+            (market_slug,),
+        ).fetchone()
+        return row is not None
+
     def get_unresolved_positions(self) -> list[Position]:
         rows = self.conn.execute(
             """

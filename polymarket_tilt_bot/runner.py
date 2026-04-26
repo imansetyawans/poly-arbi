@@ -111,6 +111,8 @@ class PaperTradingBot:
         for position in seen.values():
             if position.total_cost <= 0:
                 continue
+            if self.ledger.is_resolved(position.market_slug):
+                continue
             market = self._market_from_position(position.market_slug)
             if market is None or now < market.end_ts + 20:
                 continue
