@@ -41,11 +41,16 @@ class PaperTradingBot:
     def run(self) -> None:
         LOGGER.info("starting paper bot: assets=%s cycles=%s db=%s", self.config.runtime.assets, self.config.runtime.cycles, self.config.runtime.database_path)
         try:
-            for cycle in range(self.config.runtime.cycles):
+            cycle = 0
+            while self.config.runtime.cycles <= 0 or cycle < self.config.runtime.cycles:
                 self.step()
-                LOGGER.info("cycle %s/%s complete", cycle + 1, self.config.runtime.cycles)
-                if cycle + 1 < self.config.runtime.cycles:
+                cycle += 1
+                total = "unlimited" if self.config.runtime.cycles <= 0 else str(self.config.runtime.cycles)
+                LOGGER.info("cycle %s/%s complete", cycle, total)
+                if self.config.runtime.cycles <= 0 or cycle < self.config.runtime.cycles:
                     time.sleep(self.config.runtime.poll_seconds)
+        except KeyboardInterrupt:
+            LOGGER.info("stopped by user")
         finally:
             self.close()
 
@@ -147,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run-paper", help="Run paper trading against live markets")
     run.add_argument("--assets", type=parse_assets, default=("BTC", "ETH"), help="BTC, ETH, or BTC,ETH")
-    run.add_argument("--cycles", type=int, default=12)
+    run.add_argument("--cycles", type=int, default=12, help="Number of polling cycles. Use 0 to run until Ctrl+C.")
     run.add_argument("--poll-seconds", type=float, default=5.0)
     run.add_argument("--db", default="paper_trades.sqlite")
     run.add_argument("--balance", type=float, default=1_000.0)

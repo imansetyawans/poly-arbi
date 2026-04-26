@@ -31,6 +31,12 @@ python -m polymarket_tilt_bot scan-once --assets BTC,ETH
 python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 120 --poll-seconds 5 --db paper_trades.sqlite --balance 1000 --max-market-notional 100 --max-single-fill 10
 ```
 
+Use `--cycles 0` to run continuously until you stop it with `Ctrl+C`:
+
+```powershell
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades.sqlite --balance 1000 --max-market-notional 100 --max-single-fill 10
+```
+
 The bot records:
 
 - `markets`
