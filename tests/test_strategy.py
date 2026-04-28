@@ -1,7 +1,7 @@
 from polymarket_tilt_bot.config import RiskConfig, StrategyConfig
 from polymarket_tilt_bot.models import BookLevel, CryptoTick, Market, OrderBook, Position
 from polymarket_tilt_bot.price_window import PriceWindow
-from polymarket_tilt_bot.strategy import HedgedTiltStrategy
+from polymarket_tilt_bot.strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy
 
 
 def market() -> Market:
@@ -77,5 +77,37 @@ def test_strategy_rejects_small_notional_when_minimum_share_size_is_not_met() ->
 
     signal = strategy.build_signal(m, tick, window)
     intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.8), "Down": book("down", 0.7)})
+
+    assert not intents
+
+
+def test_hedged_mm_prioritizes_missing_side_completion() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.shares["Down"] = 20
+    position.cost["Down"] = 2
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert intents
+    assert intents[0].outcome == "Up"
+
+
+def test_hedged_mm_requires_cheap_pair() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm", hedged_mm_max_pair_cost=1.02), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.55), "Down": book("down", 0.55)})
 
     assert not intents

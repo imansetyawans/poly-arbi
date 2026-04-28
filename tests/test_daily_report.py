@@ -1,4 +1,4 @@
-from polymarket_tilt_bot.ledger import SQLiteLedger
+from polymarket_tilt_bot.ledger import CsvLedger, SQLiteLedger
 from polymarket_tilt_bot.models import Fill, Position
 
 
@@ -38,3 +38,18 @@ def test_unresolved_positions_can_be_rebuilt_from_fills(tmp_path) -> None:
     assert len(positions) == 1
     assert positions[0].shares["Down"] == 20
     assert positions[0].total_cost == 5
+
+
+def test_csv_ledger_records_and_reports(tmp_path) -> None:
+    ledger = CsvLedger(str(tmp_path / "paper_csv"))
+    position = Position("m1", "0x1")
+    fill = Fill("m1", "0x1", "Up", "up", 0.4, 10, 4, 1000)
+    position.add_fill(fill)
+    ledger.record_fill(fill)
+    ledger.record_resolution(position, "Up", 1_777_176_000)
+
+    report = ledger.daily_report("2026-04-26")
+
+    assert report["summary"]["resolved_markets"] == 1
+    assert report["summary"]["total_pnl"] == 6
+    assert ledger.realized_pnl() == 6

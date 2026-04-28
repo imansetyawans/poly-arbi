@@ -8,13 +8,13 @@ from typing import Literal
 
 from .clients import ApiError, BinanceWebSocketPriceClient, ClobClient, GammaClient, HttpClient
 from .config import BotConfig, RiskConfig, RuntimeConfig, StrategyConfig
-from .ledger import PositionBook, SQLiteLedger
+from .ledger import CsvLedger, PositionBook, SQLiteLedger
 from .market_scanner import MarketScanner
 from .models import Market
 from .paper_broker import PaperBroker
 from .price_window import PriceWindow
 from .resolution import ResolutionClient
-from .strategy import HedgedTiltStrategy
+from .strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy
 
 
 LOGGER = logging.getLogger("polymarket_tilt_bot")
@@ -29,10 +29,13 @@ class PaperTradingBot:
         self.prices = BinanceWebSocketPriceClient(config.runtime.assets)
         self.scanner = MarketScanner(self.gamma)
         self.resolver = ResolutionClient(self.gamma)
-        self.strategy = HedgedTiltStrategy(config.strategy, config.risk)
+        if config.strategy.strategy_mode in {"hedged-mm", "pair-only"}:
+            self.strategy = HedgedMarketMakerStrategy(config.strategy, config.risk)
+        else:
+            self.strategy = HedgedTiltStrategy(config.strategy, config.risk)
         self.broker = PaperBroker(slippage_bps=5.0)
         self.positions = PositionBook()
-        self.ledger = SQLiteLedger(config.runtime.database_path)
+        self.ledger = CsvLedger(config.runtime.database_path) if config.runtime.storage_mode == "csv" else SQLiteLedger(config.runtime.database_path)
         self.window = PriceWindow()
 
     def close(self) -> None:
@@ -214,13 +217,14 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         poll_seconds=args.poll_seconds,
         cycles=args.cycles,
         database_path=args.db,
+        storage_mode=args.storage,
     )
     risk = RiskConfig(
         starting_balance=args.balance,
         max_market_notional=args.max_market_notional,
         max_single_fill_notional=args.max_single_fill,
     )
-    strategy = StrategyConfig()
+    strategy = StrategyConfig(strategy_mode=args.strategy_mode)
     return BotConfig(runtime=runtime, risk=risk, strategy=strategy)
 
 
@@ -237,12 +241,15 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--cycles", type=int, default=12, help="Number of polling cycles. Use 0 to run until Ctrl+C.")
     run.add_argument("--poll-seconds", type=float, default=5.0)
     run.add_argument("--db", default="paper_trades.sqlite")
+    run.add_argument("--storage", choices=["csv", "sqlite"], default="csv")
+    run.add_argument("--strategy-mode", choices=["current", "hedged-mm", "pair-only"], default="hedged-mm")
     run.add_argument("--balance", type=float, default=1_000.0)
     run.add_argument("--max-market-notional", type=float, default=100.0)
     run.add_argument("--max-single-fill", type=float, default=10.0)
 
     report = sub.add_parser("daily-report", help="Print resolved paper PnL report from SQLite")
     report.add_argument("--db", default="paper_trades.sqlite")
+    report.add_argument("--storage", choices=["csv", "sqlite"], default="csv")
     report.add_argument("--date", default=None, help="UTC date prefix, e.g. 2026-04-26. Omit for all resolved markets.")
 
     scan = sub.add_parser("scan-once", help="Print currently tradable crypto 5m markets")
@@ -266,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "daily-report":
-        ledger = SQLiteLedger(args.db)
+        ledger = CsvLedger(args.db) if args.storage == "csv" else SQLiteLedger(args.db)
         try:
             report_data = ledger.daily_report(args.date)
         finally:

@@ -1,14 +1,15 @@
-# Poly Arbi: Polymarket Hedged-Tilt Paper Bot
+# Poly Arbi: Polymarket CSV Paper Bot
 
 This is a paper-first Python bot based on the JetFadil account analysis in `jetfadil_polymarket_report.md`.
 
-The inferred strategy is a hedged 5-minute crypto candle tilt:
+The default strategy is now adaptive two-sided inventory:
 
 1. Watch live BTC/ETH 5-minute Up/Down markets.
 2. Track the live Binance WebSocket trade price versus the market's opening/reference price.
-3. Buy both outcomes in small clips when the pair cost is acceptable.
-4. Keep the larger unpaired exposure on the side the live candle favors.
-5. Hold through resolution and decompose PnL into paired hedge PnL and unpaired directional PnL.
+3. Buy both outcomes only when the pair cost is acceptable.
+4. Complete the missing side first and keep directional bias small.
+5. Rebalance late instead of leaving one-sided exposure open.
+6. Hold through resolution and decompose PnL into paired hedge PnL and unpaired directional PnL.
 
 This repository intentionally ships in paper mode. It does not place real orders.
 The live execution boundary exists only as a disabled placeholder.
@@ -28,29 +29,39 @@ python -m polymarket_tilt_bot scan-once --assets BTC,ETH
 ## Run Paper Trading
 
 ```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 120 --poll-seconds 5 --db paper_trades.sqlite --balance 1000 --max-market-notional 100 --max-single-fill 10
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 120 --poll-seconds 5 --db paper_trades_csv --balance 1000 --max-market-notional 100 --max-single-fill 10
 ```
 
 Use `--cycles 0` to run continuously until you stop it with `Ctrl+C`:
 
 ```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades.sqlite --balance 1000 --max-market-notional 100 --max-single-fill 10
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_csv --balance 1000 --max-market-notional 100 --max-single-fill 10
+```
+
+Useful strategy/storage flags:
+
+```text
+--strategy-mode hedged-mm   # default, adaptive two-sided inventory with small bias
+--strategy-mode pair-only   # stricter, targets equal Up/Down cost
+--strategy-mode current     # old hedged-tilt behavior
+--storage csv               # default, writes separate CSV files in the --db folder
+--storage sqlite            # legacy SQLite support
 ```
 
 ## Resolution And Daily PnL
 
-The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. It records the winning outcome and PnL decomposition in the `resolutions` table.
+The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. In CSV mode it records the winning outcome and PnL decomposition in `resolutions.csv`.
 
 Print a report for all resolved markets:
 
 ```powershell
-python -m polymarket_tilt_bot daily-report --db paper_trades.sqlite
+python -m polymarket_tilt_bot daily-report --db paper_trades_csv
 ```
 
 Print a UTC-date filtered report:
 
 ```powershell
-python -m polymarket_tilt_bot daily-report --db paper_trades.sqlite --date 2026-04-26
+python -m polymarket_tilt_bot daily-report --db paper_trades_csv --date 2026-04-26
 ```
 
 The report includes total cost, total PnL, ROI, winner, paired hedge PnL, and unpaired tilt PnL per market.
@@ -83,18 +94,20 @@ The bot records:
 - `resolutions`
 
 into the SQLite database you pass with `--db`.
+into CSV files in the folder you pass with `--db`.
 
 ## Strategy Summary
 
-The bot implements the observed JetFadil-style pattern:
+The default `hedged-mm` strategy implements the lesson from paper testing:
 
 ```text
-paired hedge = min(Up shares, Down shares)
-unpaired tilt = abs(Up shares - Down shares)
-profit target = make the unpaired side correct often enough to overcome hedge cost
+complete both sides
+avoid one-sided inventory
+rebalance late
+use momentum only as a small inventory bias
 ```
 
-It avoids a hedge if `Up ask + Down ask` is too expensive, and it avoids new entries near market close by default.
+It skips markets when `Up ask + Down ask` is too expensive, prioritizes the missing side, and avoids chasing very expensive odds unless needed to complete inventory.
 
 ## Project Layout
 
@@ -102,9 +115,9 @@ It avoids a hedge if `Up ask + Down ask` is too expensive, and it avoids new ent
 polymarket_tilt_bot/
   clients.py          # Polymarket Gamma/CLOB and public price clients
   market_scanner.py   # Finds active BTC/ETH 5-minute markets
-  strategy.py         # Hedged tilt signal and order-intent logic
+  strategy.py         # Hedged MM / pair-only / legacy strategy logic
   paper_broker.py     # Conservative simulated fills against live asks
-  ledger.py           # SQLite market/signal/fill/resolution logging
+  ledger.py           # CSV-first market/signal/fill/resolution logging
   resolution.py       # Reads resolved winners from Gamma
   live_executor.py    # Disabled live-trading boundary
   runner.py           # CLI

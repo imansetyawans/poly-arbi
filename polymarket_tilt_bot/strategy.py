@@ -126,3 +126,85 @@ class HedgedTiltStrategy:
         target = {"Up": hedge, "Down": hedge}
         target[signal.direction] += tilt
         return target
+
+
+class HedgedMarketMakerStrategy(HedgedTiltStrategy):
+    """Two-sided inventory strategy with small late directional bias."""
+
+    def propose_orders(
+        self,
+        market: Market,
+        position: Position,
+        signal: Signal,
+        books: dict[Literal["Up", "Down"], OrderBook],
+    ) -> list[OrderIntent]:
+        if signal.seconds_remaining < self.risk.min_seconds_left:
+            return []
+        if signal.seconds_elapsed > self.risk.no_new_market_after_seconds:
+            return []
+        if position.total_cost >= self.risk.max_market_notional:
+            return []
+
+        up_ask = books["Up"].best_ask
+        down_ask = books["Down"].best_ask
+        if up_ask is None or down_ask is None:
+            return []
+        if up_ask + down_ask > self.strategy.hedged_mm_max_pair_cost:
+            return []
+
+        target_cost = self._target_costs(signal)
+        if self.strategy.strategy_mode == "pair-only":
+            target_cost = {"Up": self.risk.max_market_notional / 2, "Down": self.risk.max_market_notional / 2}
+
+        intents: list[OrderIntent] = []
+        for outcome in self._order_priority(position, signal):
+            ask = books[outcome].best_ask
+            if ask is None:
+                continue
+            wanted = target_cost[outcome] - position.cost[outcome]
+            remaining_budget = self.risk.max_market_notional - position.total_cost
+            notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
+            if notional <= 0:
+                continue
+            if notional / ask < market.min_order_size:
+                continue
+            if self._is_chasing(outcome, ask, position, signal):
+                continue
+            intents.append(
+                OrderIntent(
+                    market_slug=market.slug,
+                    outcome=outcome,
+                    token_id=market.up_token if outcome == "Up" else market.down_token,
+                    max_notional=notional,
+                    limit_price=round(ask, 3),
+                    reason=f"hedged-mm {signal.reason}",
+                )
+            )
+        return intents
+
+    def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
+        half = self.risk.max_market_notional / 2.0
+        if self.strategy.strategy_mode == "pair-only":
+            return {"Up": half, "Down": half}
+        bias = min(self.strategy.max_directional_bias, signal.confidence * self.strategy.max_directional_bias)
+        if signal.seconds_elapsed < self.strategy.rebalance_start_seconds:
+            bias *= 0.35
+        target = {"Up": half, "Down": half}
+        target[signal.direction] = half * (1.0 + bias)
+        target["Down" if signal.direction == "Up" else "Up"] = half * (1.0 - bias)
+        return target
+
+    def _order_priority(self, position: Position, signal: Signal) -> list[Literal["Up", "Down"]]:
+        if position.shares["Up"] <= 0 and position.shares["Down"] > 0:
+            return ["Up", "Down"]
+        if position.shares["Down"] <= 0 and position.shares["Up"] > 0:
+            return ["Down", "Up"]
+        if signal.seconds_elapsed >= self.strategy.rebalance_start_seconds:
+            return [signal.direction, "Down" if signal.direction == "Up" else "Up"]
+        return ["Up", "Down"]
+
+    def _is_chasing(self, outcome: Literal["Up", "Down"], ask: float, position: Position, signal: Signal) -> bool:
+        if ask <= self.strategy.avoid_chase_price:
+            return False
+        needs_completion = position.shares[outcome] <= 0 or position.cost[outcome] < self.risk.max_single_fill_notional
+        return not needs_completion

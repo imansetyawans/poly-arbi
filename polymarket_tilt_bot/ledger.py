@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import sqlite3
 from pathlib import Path
@@ -292,3 +293,181 @@ class SQLiteLedger:
     def realized_pnl(self) -> float:
         rows = self.conn.execute("SELECT result_json FROM resolutions").fetchall()
         return sum(float(json.loads(row["result_json"])["pnl"]) for row in rows)
+
+
+class CsvLedger:
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        if self.path.suffix:
+            self.path = self.path.with_suffix("")
+        self.path.mkdir(parents=True, exist_ok=True)
+        self.files = {
+            "markets": self.path / "markets.csv",
+            "signals": self.path / "signals.csv",
+            "fills": self.path / "fills.csv",
+            "orderbook_snapshots": self.path / "orderbook_snapshots.csv",
+            "resolutions": self.path / "resolutions.csv",
+        }
+        self.headers = {
+            "markets": ["slug", "condition_id", "asset", "title", "start_ts", "end_ts", "up_token", "down_token", "resolution_source", "price_to_beat", "first_seen_ts"],
+            "signals": ["market_slug", "timestamp", "probability_up", "confidence", "direction", "seconds_elapsed", "seconds_remaining", "distance_bps", "momentum_bps", "reason"],
+            "fills": ["market_slug", "condition_id", "outcome", "token_id", "price", "size", "notional", "timestamp", "simulated", "reason"],
+            "orderbook_snapshots": ["market_slug", "outcome", "token_id", "best_bid", "best_ask", "bid_depth", "ask_depth", "timestamp"],
+            "resolutions": ["market_slug", "winner", "result_json", "timestamp"],
+        }
+        for name, file in self.files.items():
+            if not file.exists():
+                self._append(name, [])
+
+    def close(self) -> None:
+        return None
+
+    def _append(self, name: str, rows: list[dict[str, object]]) -> None:
+        file = self.files[name]
+        exists = file.exists()
+        with file.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.headers[name])
+            if not exists:
+                writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+    def _read(self, name: str) -> list[dict[str, str]]:
+        file = self.files[name]
+        if not file.exists():
+            return []
+        with file.open("r", newline="", encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+
+    def record_market(self, market: Market, timestamp: float) -> None:
+        if any(row["slug"] == market.slug for row in self._read("markets")):
+            return
+        self._append("markets", [{
+            "slug": market.slug,
+            "condition_id": market.condition_id,
+            "asset": market.asset,
+            "title": market.title,
+            "start_ts": market.start_ts,
+            "end_ts": market.end_ts,
+            "up_token": market.up_token,
+            "down_token": market.down_token,
+            "resolution_source": market.resolution_source,
+            "price_to_beat": market.price_to_beat if market.price_to_beat is not None else "",
+            "first_seen_ts": timestamp,
+        }])
+
+    def record_signal(self, signal: Signal, timestamp: float) -> None:
+        self._append("signals", [{
+            "market_slug": signal.market_slug,
+            "timestamp": timestamp,
+            "probability_up": signal.probability_up,
+            "confidence": signal.confidence,
+            "direction": signal.direction,
+            "seconds_elapsed": signal.seconds_elapsed,
+            "seconds_remaining": signal.seconds_remaining,
+            "distance_bps": signal.distance_bps,
+            "momentum_bps": signal.momentum_bps,
+            "reason": signal.reason,
+        }])
+
+    def record_fill(self, fill: Fill) -> None:
+        self._append("fills", [{
+            "market_slug": fill.market_slug,
+            "condition_id": fill.condition_id,
+            "outcome": fill.outcome,
+            "token_id": fill.token_id,
+            "price": fill.price,
+            "size": fill.size,
+            "notional": fill.notional,
+            "timestamp": fill.timestamp,
+            "simulated": 1 if fill.simulated else 0,
+            "reason": fill.reason,
+        }])
+
+    def record_orderbooks(self, market: Market, books: dict[Literal["Up", "Down"], object], timestamp: float) -> None:
+        rows = []
+        for outcome, book in books.items():
+            rows.append({
+                "market_slug": market.slug,
+                "outcome": outcome,
+                "token_id": book.token_id,
+                "best_bid": book.best_bid if book.best_bid is not None else "",
+                "best_ask": book.best_ask if book.best_ask is not None else "",
+                "bid_depth": sum(level.size for level in book.bids),
+                "ask_depth": sum(level.size for level in book.asks),
+                "timestamp": timestamp,
+            })
+        self._append("orderbook_snapshots", rows)
+
+    def record_resolution(self, position: Position, winner: Literal["Up", "Down"], timestamp: float) -> dict[str, object]:
+        result = position.resolve(winner)
+        existing = [row for row in self._read("resolutions") if row["market_slug"] != position.market_slug]
+        self.files["resolutions"].unlink(missing_ok=True)
+        self._append("resolutions", existing + [{
+            "market_slug": position.market_slug,
+            "winner": winner,
+            "result_json": json.dumps(result),
+            "timestamp": timestamp,
+        }])
+        return result
+
+    def is_resolved(self, market_slug: str) -> bool:
+        return any(row["market_slug"] == market_slug for row in self._read("resolutions"))
+
+    def get_unresolved_positions(self) -> list[Position]:
+        resolved = {row["market_slug"] for row in self._read("resolutions")}
+        positions: dict[str, Position] = {}
+        for row in self._read("fills"):
+            if row["market_slug"] in resolved:
+                continue
+            position = positions.setdefault(row["market_slug"], Position(row["market_slug"], row["condition_id"]))
+            outcome = row["outcome"]
+            position.shares[outcome] += float(row["size"])
+            position.cost[outcome] += float(row["notional"])
+        return list(positions.values())
+
+    def daily_report(self, day_prefix: str | None = None) -> dict[str, object]:
+        rows = self._read("resolutions")
+        markets = []
+        total_pnl = 0.0
+        total_cost = 0.0
+        wins = 0
+        losses = 0
+        for row in rows:
+            timestamp = float(row["timestamp"])
+            if day_prefix:
+                import datetime as dt
+                if not dt.datetime.fromtimestamp(timestamp, dt.timezone.utc).isoformat().startswith(day_prefix):
+                    continue
+            result = json.loads(row["result_json"])
+            pnl = float(result["pnl"])
+            cost = float(result["total_cost"])
+            total_pnl += pnl
+            total_cost += cost
+            wins += pnl > 0
+            losses += pnl < 0
+            markets.append({
+                "market_slug": row["market_slug"],
+                "winner": row["winner"],
+                "pnl": pnl,
+                "cost": cost,
+                "paired_pnl": float(result["paired_pnl"]),
+                "unpaired_side": result["unpaired_side"],
+                "unpaired_pnl": float(result["unpaired_pnl"]),
+                "up_shares": float(result["up_shares"]),
+                "down_shares": float(result["down_shares"]),
+            })
+        return {
+            "markets": markets,
+            "summary": {
+                "resolved_markets": len(markets),
+                "wins": wins,
+                "losses": losses,
+                "total_pnl": total_pnl,
+                "total_cost": total_cost,
+                "roi": total_pnl / total_cost if total_cost else 0.0,
+            },
+        }
+
+    def realized_pnl(self) -> float:
+        return sum(float(json.loads(row["result_json"])["pnl"]) for row in self._read("resolutions"))

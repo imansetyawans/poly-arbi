@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
+StrategyMode = Literal["current", "hedged-mm", "pair-only"]
+StorageMode = Literal["csv", "sqlite"]
+
+
 @dataclass(frozen=True)
 class RiskConfig:
     starting_balance: float = 1_000.0
@@ -20,6 +24,7 @@ class RiskConfig:
 class StrategyConfig:
     base_hedge_notional: float = 12.0
     max_pair_cost: float = 1.08
+    hedged_mm_max_pair_cost: float = 1.03
     min_confidence_to_tilt: float = 0.12
     strong_confidence: float = 0.55
     price_edge_buffer: float = 0.015
@@ -27,6 +32,11 @@ class StrategyConfig:
     max_tilt_price: float = 0.90
     volatility_floor_bps: float = 3.0
     momentum_window_seconds: float = 20.0
+    max_directional_bias: float = 0.10
+    hedge_completion_seconds: float = 120.0
+    rebalance_start_seconds: float = 180.0
+    avoid_chase_price: float = 0.85
+    strategy_mode: StrategyMode = "hedged-mm"
 
 
 @dataclass(frozen=True)
@@ -34,7 +44,8 @@ class RuntimeConfig:
     assets: tuple[Literal["BTC", "ETH"], ...] = ("BTC", "ETH")
     poll_seconds: float = 5.0
     cycles: int = 12
-    database_path: str = "paper_trades.sqlite"
+    database_path: str = "paper_trades"
+    storage_mode: StorageMode = "csv"
     gamma_base_url: str = "https://gamma-api.polymarket.com"
     clob_base_url: str = "https://clob.polymarket.com"
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
