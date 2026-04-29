@@ -176,7 +176,7 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
                     outcome=outcome,
                     token_id=market.up_token if outcome == "Up" else market.down_token,
                     max_notional=notional,
-                    limit_price=round(ask, 3),
+                    limit_price=round(min(0.999, ask + self.strategy.price_edge_buffer), 3),
                     reason=f"hedged-mm {signal.reason}",
                 )
             )

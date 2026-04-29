@@ -111,3 +111,18 @@ def test_hedged_mm_requires_cheap_pair() -> None:
     intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.55), "Down": book("down", 0.55)})
 
     assert not intents
+
+
+def test_hedged_mm_limit_includes_slippage_buffer() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.70), "Down": book("down", 0.30)})
+
+    down_intent = next(intent for intent in intents if intent.outcome == "Down")
+    assert down_intent.limit_price > 0.30
