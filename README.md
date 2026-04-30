@@ -8,7 +8,7 @@ The default strategy is now adaptive two-sided inventory:
 2. Track the live Binance WebSocket trade price versus the market's opening/reference price.
 3. Buy both outcomes only when the pair cost is acceptable.
 4. Complete the missing side first and keep directional bias small.
-5. Rebalance late instead of leaving one-sided exposure open.
+5. Cap one-sided starter exposure and rebalance late instead of stacking unfinished positions.
 6. Hold through resolution and decompose PnL into paired hedge PnL and unpaired directional PnL.
 
 This repository intentionally ships in paper mode. It does not place real orders.
@@ -48,6 +48,18 @@ Useful strategy/storage flags:
 --storage sqlite            # legacy SQLite support
 ```
 
+One-sided risk controls are enabled by default:
+
+```text
+--max-unpaired-notional             # defaults to min(max single fill, 25% of market cap)
+--starter-entry-cutoff-seconds 90   # stop opening fresh flat positions after this elapsed time
+--completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
+--completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
+--bad-regime-window 20              # recent resolved markets to inspect
+--bad-regime-min-completion-rate .5 # pause new entries below this completion rate
+--disable-bad-regime-guard          # keep completion rules but disable new-entry pause
+```
+
 ## Resolution And Daily PnL
 
 The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. In CSV mode it records the winning outcome and PnL decomposition in `resolutions.csv`.
@@ -65,6 +77,7 @@ python -m polymarket_tilt_bot daily-report --db paper_trades_csv --date 2026-04-
 ```
 
 The report includes total cost, total PnL, ROI, winner, paired hedge PnL, and unpaired tilt PnL per market.
+It also prints both-sided completion rate, both-sided PnL, one-sided PnL, failed one-sided markets, and PnL buckets by last-fill timing and total cost.
 
 Every cycle, the bot logs the current Polymarket odds and your paper position:
 
@@ -107,7 +120,7 @@ rebalance late
 use momentum only as a small inventory bias
 ```
 
-It skips markets when `Up ask + Down ask` is too expensive, prioritizes the missing side, and avoids chasing very expensive odds unless needed to complete inventory.
+It skips flat markets when `Up ask + Down ask` is too expensive, prioritizes the missing side after the first fill, blocks repeated same-side stacking above the one-sided cap, and avoids chasing very expensive odds unless needed to complete inventory.
 
 ## Project Layout
 

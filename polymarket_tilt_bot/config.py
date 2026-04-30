@@ -13,6 +13,7 @@ class RiskConfig:
     starting_balance: float = 1_000.0
     max_market_notional: float = 100.0
     max_single_fill_notional: float = 10.0
+    max_unpaired_notional: float | None = None
     max_daily_loss: float = 150.0
     max_consecutive_losses: int = 4
     reserve_fraction: float = 0.50
@@ -35,6 +36,12 @@ class StrategyConfig:
     max_directional_bias: float = 0.10
     hedge_completion_seconds: float = 120.0
     rebalance_start_seconds: float = 180.0
+    starter_entry_cutoff_seconds: float = 90.0
+    completion_pair_cost_mid: float = 1.05
+    completion_pair_cost_late: float = 1.08
+    bad_regime_window: int = 20
+    bad_regime_min_completion_rate: float = 0.50
+    bad_regime_guard_enabled: bool = True
     avoid_chase_price: float = 0.85
     strategy_mode: StrategyMode = "hedged-mm"
 

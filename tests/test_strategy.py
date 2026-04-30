@@ -118,7 +118,7 @@ def test_hedged_mm_limit_includes_slippage_buffer() -> None:
     window = PriceWindow()
     m = market()
     window.add(CryptoTick("BTC", 100.0, 1000, "test"))
-    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
     window.add(tick)
 
     signal = strategy.build_signal(m, tick, window)
@@ -126,3 +126,87 @@ def test_hedged_mm_limit_includes_slippage_buffer() -> None:
 
     down_intent = next(intent for intent in intents if intent.outcome == "Down")
     assert down_intent.limit_price > 0.30
+
+
+def test_hedged_mm_blocks_repeated_same_side_after_unpaired_cap() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.shares["Down"] = 10
+    position.cost["Down"] = 2
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.90), "Down": book("down", 0.20)})
+
+    assert not intents
+
+
+def test_hedged_mm_allows_missing_side_completion_first() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.shares["Down"] = 10
+    position.cost["Down"] = 2
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.20)})
+
+    assert intents
+    assert intents[0].outcome == "Up"
+
+
+def test_hedged_mm_blocks_flat_starter_after_cutoff() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm", starter_entry_cutoff_seconds=90), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert not intents
+
+
+def test_hedged_mm_still_allows_late_completion() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="hedged-mm", completion_pair_cost_late=1.08),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=5),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.shares["Up"] = 4
+    position.cost["Up"] = 2
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.50), "Down": book("down", 0.56)})
+
+    assert intents
+    assert intents[0].outcome == "Down"
+
+
+def test_hedged_mm_preserves_normal_two_sided_entry_when_pair_is_favorable() -> None:
+    strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert {intent.outcome for intent in intents} == {"Up", "Down"}

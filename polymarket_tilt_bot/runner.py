@@ -96,7 +96,8 @@ class PaperTradingBot:
         self.ledger.record_signal(signal, timestamp)
         self.ledger.record_orderbooks(market, books, timestamp)
         self._log_market_state(market, books, position, signal)
-        intents = self.strategy.propose_orders(market, position, signal, books)
+        starter_allowed = not self._bad_regime_pause() if position.total_cost <= 0 else True
+        intents = self.strategy.propose_orders(market, position, signal, books, allow_starter=starter_allowed)
         for intent in intents:
             fill = self.broker.execute(market, intent, books[intent.outcome], timestamp)
             if fill is None:
@@ -111,6 +112,13 @@ class PaperTradingBot:
                 fill.price,
                 fill.notional,
             )
+
+    def _bad_regime_pause(self) -> bool:
+        strategy = self.config.strategy
+        if not strategy.bad_regime_guard_enabled:
+            return False
+        resolved, completion_rate = self.ledger.recent_completion_rate(strategy.bad_regime_window)
+        return resolved >= strategy.bad_regime_window and completion_rate < strategy.bad_regime_min_completion_rate
 
     def _try_resolve_finished_positions(self) -> None:
         now = time.time()
@@ -223,8 +231,17 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         starting_balance=args.balance,
         max_market_notional=args.max_market_notional,
         max_single_fill_notional=args.max_single_fill,
+        max_unpaired_notional=args.max_unpaired_notional,
     )
-    strategy = StrategyConfig(strategy_mode=args.strategy_mode)
+    strategy = StrategyConfig(
+        strategy_mode=args.strategy_mode,
+        starter_entry_cutoff_seconds=args.starter_entry_cutoff_seconds,
+        completion_pair_cost_mid=args.completion_pair_cost_mid,
+        completion_pair_cost_late=args.completion_pair_cost_late,
+        bad_regime_window=args.bad_regime_window,
+        bad_regime_min_completion_rate=args.bad_regime_min_completion_rate,
+        bad_regime_guard_enabled=not args.disable_bad_regime_guard,
+    )
     return BotConfig(runtime=runtime, risk=risk, strategy=strategy)
 
 
@@ -246,6 +263,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--balance", type=float, default=1_000.0)
     run.add_argument("--max-market-notional", type=float, default=100.0)
     run.add_argument("--max-single-fill", type=float, default=10.0)
+    run.add_argument("--max-unpaired-notional", type=float, default=None)
+    run.add_argument("--starter-entry-cutoff-seconds", type=float, default=90.0)
+    run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
+    run.add_argument("--completion-pair-cost-late", type=float, default=1.08)
+    run.add_argument("--bad-regime-window", type=int, default=20)
+    run.add_argument("--bad-regime-min-completion-rate", type=float, default=0.50)
+    run.add_argument("--disable-bad-regime-guard", action="store_true")
 
     report = sub.add_parser("daily-report", help="Print resolved paper PnL report from SQLite")
     report.add_argument("--db", default="paper_trades.sqlite")
@@ -284,6 +308,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Total cost: ${summary['total_cost']:.2f}")
         print(f"Total PnL: ${summary['total_pnl']:.2f}")
         print(f"ROI: {summary['roi'] * 100:.2f}%")
+        print(f"Both-sided completion rate: {summary['both_sided_completion_rate'] * 100:.2f}%")
+        print(f"Both-sided PnL: ${summary['both_sided_pnl']:.2f}")
+        print(f"One-sided PnL: ${summary['one_sided_pnl']:.2f}")
+        print(f"Failed one-sided markets: {summary['failed_one_sided_markets']}")
+        print("")
+        print("PnL by last-fill timing bucket:")
+        for label, data in summary["timing_buckets"].items():
+            print(f"{label}: markets={data['markets']} pnl=${data['pnl']:.2f} roi={data['roi'] * 100:.2f}%")
+        print("")
+        print("PnL by cost bucket:")
+        for label, data in summary["cost_buckets"].items():
+            print(f"{label}: markets={data['markets']} pnl=${data['pnl']:.2f} roi={data['roi'] * 100:.2f}%")
         print("")
         print("market,winner,pnl,cost,paired_pnl,unpaired_side,unpaired_pnl,up_shares,down_shares")
         for row in report_data["markets"]:

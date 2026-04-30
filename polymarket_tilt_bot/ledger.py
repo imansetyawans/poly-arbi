@@ -29,6 +29,138 @@ class PositionBook:
         return list(self._positions.values())
 
 
+def _is_both_sided(result: dict[str, object]) -> bool:
+    return float(result.get("up_shares", 0.0) or 0.0) > 0 and float(result.get("down_shares", 0.0) or 0.0) > 0
+
+
+def _bucket_stats(markets: list[dict[str, object]], labels: list[str]) -> dict[str, dict[str, float | int]]:
+    buckets = {label: {"markets": 0, "pnl": 0.0, "cost": 0.0, "roi": 0.0} for label in labels}
+    for market in markets:
+        label = str(market.get("bucket", ""))
+        if label not in buckets:
+            continue
+        buckets[label]["markets"] += 1
+        buckets[label]["pnl"] += float(market["pnl"])
+        buckets[label]["cost"] += float(market["cost"])
+    for data in buckets.values():
+        cost = float(data["cost"])
+        data["roi"] = float(data["pnl"]) / cost if cost else 0.0
+    return buckets
+
+
+def _last_fill_elapsed(market_slug: str, fills_by_market: dict[str, list[dict[str, object]]]) -> float | None:
+    fills = fills_by_market.get(market_slug, [])
+    if not fills:
+        return None
+    try:
+        start_ts = float(market_slug.rsplit("-", 1)[-1])
+    except ValueError:
+        return None
+    last_fill_ts = max(float(row["timestamp"]) for row in fills)
+    return last_fill_ts - start_ts
+
+
+def _timing_bucket(seconds: float | None) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 60:
+        return "0-60"
+    if seconds < 120:
+        return "60-120"
+    if seconds < 180:
+        return "120-180"
+    if seconds < 240:
+        return "180-240"
+    if seconds < 285:
+        return "240-285"
+    return "285+"
+
+
+def _cost_bucket(cost: float) -> str:
+    if cost < 4:
+        return "0-4"
+    if cost < 6:
+        return "4-6"
+    if cost < 9:
+        return "6-9"
+    if cost < 12:
+        return "9-12"
+    return "12+"
+
+
+def _build_report(rows: list[dict[str, object]], fill_rows: list[dict[str, object]]) -> dict[str, object]:
+    fills_by_market: dict[str, list[dict[str, object]]] = {}
+    for row in fill_rows:
+        fills_by_market.setdefault(str(row["market_slug"]), []).append(row)
+
+    markets = []
+    total_pnl = 0.0
+    total_cost = 0.0
+    wins = 0
+    losses = 0
+    both_sided = 0
+    one_sided = 0
+    both_sided_pnl = 0.0
+    one_sided_pnl = 0.0
+    failed_one_sided = 0
+    timing_rows = []
+    cost_rows = []
+    for row in rows:
+        result = json.loads(str(row["result_json"]))
+        pnl = float(result["pnl"])
+        cost = float(result["total_cost"])
+        total_pnl += pnl
+        total_cost += cost
+        wins += pnl > 0
+        losses += pnl < 0
+        is_both_sided = _is_both_sided(result)
+        both_sided += is_both_sided
+        one_sided += not is_both_sided
+        if is_both_sided:
+            both_sided_pnl += pnl
+        else:
+            one_sided_pnl += pnl
+            failed_one_sided += pnl < 0
+        last_elapsed = _last_fill_elapsed(str(row["market_slug"]), fills_by_market)
+        markets.append(
+            {
+                "market_slug": row["market_slug"],
+                "winner": row["winner"],
+                "pnl": pnl,
+                "cost": cost,
+                "paired_pnl": float(result["paired_pnl"]),
+                "unpaired_side": result["unpaired_side"],
+                "unpaired_pnl": float(result["unpaired_pnl"]),
+                "up_shares": float(result["up_shares"]),
+                "down_shares": float(result["down_shares"]),
+                "both_sided": is_both_sided,
+                "last_fill_elapsed": last_elapsed,
+            }
+        )
+        timing_rows.append({"bucket": _timing_bucket(last_elapsed), "pnl": pnl, "cost": cost})
+        cost_rows.append({"bucket": _cost_bucket(cost), "pnl": pnl, "cost": cost})
+
+    return {
+        "markets": markets,
+        "summary": {
+            "resolved_markets": len(markets),
+            "wins": wins,
+            "losses": losses,
+            "total_pnl": total_pnl,
+            "total_cost": total_cost,
+            "roi": total_pnl / total_cost if total_cost else 0.0,
+            "both_sided_markets": both_sided,
+            "one_sided_markets": one_sided,
+            "both_sided_completion_rate": both_sided / len(markets) if markets else 0.0,
+            "both_sided_pnl": both_sided_pnl,
+            "one_sided_pnl": one_sided_pnl,
+            "failed_one_sided_markets": failed_one_sided,
+            "timing_buckets": _bucket_stats(timing_rows, ["0-60", "60-120", "120-180", "180-240", "240-285", "285+", "unknown"]),
+            "cost_buckets": _bucket_stats(cost_rows, ["0-4", "4-6", "6-9", "9-12", "12+"]),
+        },
+    }
+
+
 class SQLiteLedger:
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -252,43 +384,38 @@ class SQLiteLedger:
             """,
             params,
         ).fetchall()
-        markets = []
-        total_pnl = 0.0
-        total_cost = 0.0
-        wins = 0
-        losses = 0
-        for row in rows:
-            result = json.loads(row["result_json"])
-            pnl = float(result["pnl"])
-            cost = float(result["total_cost"])
-            total_pnl += pnl
-            total_cost += cost
-            wins += pnl > 0
-            losses += pnl < 0
-            markets.append(
-                {
-                    "market_slug": row["market_slug"],
-                    "winner": row["winner"],
-                    "pnl": pnl,
-                    "cost": cost,
-                    "paired_pnl": float(result["paired_pnl"]),
-                    "unpaired_side": result["unpaired_side"],
-                    "unpaired_pnl": float(result["unpaired_pnl"]),
-                    "up_shares": float(result["up_shares"]),
-                    "down_shares": float(result["down_shares"]),
-                }
-            )
-        return {
-            "markets": markets,
-            "summary": {
-                "resolved_markets": len(markets),
-                "wins": wins,
-                "losses": losses,
-                "total_pnl": total_pnl,
-                "total_cost": total_cost,
-                "roi": total_pnl / total_cost if total_cost else 0.0,
-            },
-        }
+        market_slugs = [row["market_slug"] for row in rows]
+        fill_rows: list[dict[str, object]] = []
+        if market_slugs:
+            placeholders = ",".join("?" for _ in market_slugs)
+            fill_rows = [
+                dict(row)
+                for row in self.conn.execute(
+                    f"""
+                    SELECT market_slug, timestamp
+                    FROM fills
+                    WHERE market_slug IN ({placeholders})
+                    ORDER BY timestamp
+                    """,
+                    tuple(market_slugs),
+                ).fetchall()
+            ]
+        return _build_report([dict(row) for row in rows], fill_rows)
+
+    def recent_completion_rate(self, window: int) -> tuple[int, float]:
+        rows = self.conn.execute(
+            """
+            SELECT result_json
+            FROM resolutions
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (window,),
+        ).fetchall()
+        if len(rows) < window or window <= 0:
+            return len(rows), 1.0
+        both_sided = sum(_is_both_sided(json.loads(row["result_json"])) for row in rows)
+        return len(rows), both_sided / len(rows)
 
     def realized_pnl(self) -> float:
         rows = self.conn.execute("SELECT result_json FROM resolutions").fetchall()
@@ -428,46 +555,28 @@ class CsvLedger:
 
     def daily_report(self, day_prefix: str | None = None) -> dict[str, object]:
         rows = self._read("resolutions")
-        markets = []
-        total_pnl = 0.0
-        total_cost = 0.0
-        wins = 0
-        losses = 0
+        selected_rows = []
         for row in rows:
             timestamp = float(row["timestamp"])
             if day_prefix:
                 import datetime as dt
                 if not dt.datetime.fromtimestamp(timestamp, dt.timezone.utc).isoformat().startswith(day_prefix):
                     continue
-            result = json.loads(row["result_json"])
-            pnl = float(result["pnl"])
-            cost = float(result["total_cost"])
-            total_pnl += pnl
-            total_cost += cost
-            wins += pnl > 0
-            losses += pnl < 0
-            markets.append({
-                "market_slug": row["market_slug"],
-                "winner": row["winner"],
-                "pnl": pnl,
-                "cost": cost,
-                "paired_pnl": float(result["paired_pnl"]),
-                "unpaired_side": result["unpaired_side"],
-                "unpaired_pnl": float(result["unpaired_pnl"]),
-                "up_shares": float(result["up_shares"]),
-                "down_shares": float(result["down_shares"]),
-            })
-        return {
-            "markets": markets,
-            "summary": {
-                "resolved_markets": len(markets),
-                "wins": wins,
-                "losses": losses,
-                "total_pnl": total_pnl,
-                "total_cost": total_cost,
-                "roi": total_pnl / total_cost if total_cost else 0.0,
-            },
-        }
+            selected_rows.append(row)
+        selected_slugs = {row["market_slug"] for row in selected_rows}
+        fill_rows = [
+            {"market_slug": row["market_slug"], "timestamp": row["timestamp"]}
+            for row in self._read("fills")
+            if row["market_slug"] in selected_slugs
+        ]
+        return _build_report(selected_rows, fill_rows)
+
+    def recent_completion_rate(self, window: int) -> tuple[int, float]:
+        rows = sorted(self._read("resolutions"), key=lambda row: float(row["timestamp"]), reverse=True)[:window]
+        if len(rows) < window or window <= 0:
+            return len(rows), 1.0
+        both_sided = sum(_is_both_sided(json.loads(row["result_json"])) for row in rows)
+        return len(rows), both_sided / len(rows)
 
     def realized_pnl(self) -> float:
         return sum(float(json.loads(row["result_json"])["pnl"]) for row in self._read("resolutions"))
