@@ -87,6 +87,8 @@ class HedgedTiltStrategy:
             wanted = target_cost[outcome] - position.cost[outcome]
             remaining_budget = self.risk.max_market_notional - position.total_cost
             notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
+            if notional < self.risk.min_order_notional:
+                continue
             estimated_shares = notional / ask if ask else 0.0
             if estimated_shares < market.min_order_size:
                 continue
@@ -173,6 +175,8 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
             if notional > 0 and not self._is_completion_side(outcome, position):
                 notional = min(notional, self._same_side_room(position))
             if notional <= 0:
+                continue
+            if notional < self.risk.min_order_notional:
                 continue
             if not self._price_is_allowed(outcome, ask, position, signal, up_ask, down_ask):
                 continue

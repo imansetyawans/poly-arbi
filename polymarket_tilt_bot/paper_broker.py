@@ -7,8 +7,9 @@ from .models import Fill, Market, OrderBook, OrderIntent
 
 
 class PaperBroker:
-    def __init__(self, slippage_bps: float = 0.0) -> None:
+    def __init__(self, slippage_bps: float = 0.0, min_order_notional: float = 1.0) -> None:
         self.slippage_bps = slippage_bps
+        self.min_order_notional = min_order_notional
 
     def execute(
         self,
@@ -17,6 +18,8 @@ class PaperBroker:
         book: OrderBook,
         now: float | None = None,
     ) -> Fill | None:
+        if intent.max_notional < self.min_order_notional:
+            return None
         remaining_notional = intent.max_notional
         filled_size = 0.0
         spent = 0.0
@@ -35,7 +38,7 @@ class PaperBroker:
             remaining_notional -= take_notional
             if remaining_notional <= 1e-9:
                 break
-        if spent <= 0 or filled_size <= 0:
+        if spent < self.min_order_notional or filled_size <= 0:
             return None
         avg_price = spent / filled_size
         return Fill(

@@ -21,3 +21,19 @@ def test_paper_broker_rejects_when_ask_above_limit() -> None:
     intent = OrderIntent("slug", "Up", "up", max_notional=5, limit_price=0.54, reason="test")
 
     assert PaperBroker().execute(market, intent, book, now=1234) is None
+
+
+def test_paper_broker_rejects_sub_minimum_notional_order() -> None:
+    market = Market("BTC", "slug", "0x1", "title", 1000, 1300, "up", "down", True, False)
+    book = OrderBook("up", bids=[], asks=[BookLevel(0.05, 100)])
+    intent = OrderIntent("slug", "Up", "up", max_notional=0.5, limit_price=0.05, reason="test")
+
+    assert PaperBroker(min_order_notional=1.0).execute(market, intent, book, now=1234) is None
+
+
+def test_paper_broker_rejects_partial_fill_below_minimum_notional() -> None:
+    market = Market("BTC", "slug", "0x1", "title", 1000, 1300, "up", "down", True, False)
+    book = OrderBook("up", bids=[], asks=[BookLevel(0.05, 10)])
+    intent = OrderIntent("slug", "Up", "up", max_notional=2.0, limit_price=0.05, reason="test")
+
+    assert PaperBroker(min_order_notional=1.0).execute(market, intent, book, now=1234) is None

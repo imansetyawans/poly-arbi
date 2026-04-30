@@ -52,6 +52,7 @@ One-sided risk controls are enabled by default:
 
 ```text
 --max-unpaired-notional             # defaults to min(max single fill, 25% of market cap)
+--min-order-notional 1              # reject paper orders/fills below Polymarket's $1 minimum
 --starter-entry-cutoff-seconds 90   # stop opening fresh flat positions after this elapsed time
 --completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
 --completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
@@ -152,7 +153,7 @@ The defaults are deliberately small:
 - no new entries in the final 15 seconds
 - live execution is not implemented
 
-For small-balance paper tests, `$1-$2` single fills are supported when the order would still meet the market's minimum share size. For example, `$2` at `0.20` odds buys about `10` shares, while `$2` at `0.80` odds buys only `2.5` shares and may be skipped.
+For small-balance paper tests, `$1-$2` single fills are supported when the order would still meet Polymarket's minimum order notional and share size. For example, `$2` at `0.20` odds buys about `10` shares, while `$2` at `0.80` odds buys only `2.5` shares and may be skipped. Any order below `$1` is skipped even when the share count would be large enough.
 
 ## Tests
 

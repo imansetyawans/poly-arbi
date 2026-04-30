@@ -14,6 +14,7 @@ class RiskConfig:
     max_market_notional: float = 100.0
     max_single_fill_notional: float = 10.0
     max_unpaired_notional: float | None = None
+    min_order_notional: float = 1.0
     max_daily_loss: float = 150.0
     max_consecutive_losses: int = 4
     reserve_fraction: float = 0.50

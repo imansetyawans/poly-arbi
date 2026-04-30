@@ -33,7 +33,7 @@ class PaperTradingBot:
             self.strategy = HedgedMarketMakerStrategy(config.strategy, config.risk)
         else:
             self.strategy = HedgedTiltStrategy(config.strategy, config.risk)
-        self.broker = PaperBroker(slippage_bps=5.0)
+        self.broker = PaperBroker(slippage_bps=5.0, min_order_notional=config.risk.min_order_notional)
         self.positions = PositionBook()
         self.ledger = CsvLedger(config.runtime.database_path) if config.runtime.storage_mode == "csv" else SQLiteLedger(config.runtime.database_path)
         self.window = PriceWindow()
@@ -232,6 +232,7 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         max_market_notional=args.max_market_notional,
         max_single_fill_notional=args.max_single_fill,
         max_unpaired_notional=args.max_unpaired_notional,
+        min_order_notional=args.min_order_notional,
     )
     strategy = StrategyConfig(
         strategy_mode=args.strategy_mode,
@@ -264,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-market-notional", type=float, default=100.0)
     run.add_argument("--max-single-fill", type=float, default=10.0)
     run.add_argument("--max-unpaired-notional", type=float, default=None)
+    run.add_argument("--min-order-notional", type=float, default=1.0)
     run.add_argument("--starter-entry-cutoff-seconds", type=float, default=90.0)
     run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
     run.add_argument("--completion-pair-cost-late", type=float, default=1.08)

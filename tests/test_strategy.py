@@ -81,6 +81,20 @@ def test_strategy_rejects_small_notional_when_minimum_share_size_is_not_met() ->
     assert not intents
 
 
+def test_strategy_rejects_sub_minimum_notional_even_when_share_size_is_met() -> None:
+    strategy = HedgedTiltStrategy(StrategyConfig(), RiskConfig(max_market_notional=12, max_single_fill_notional=0.5, min_order_notional=1.0))
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.1, 1050, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.05), "Down": book("down", 0.05)})
+
+    assert not intents
+
+
 def test_hedged_mm_prioritizes_missing_side_completion() -> None:
     strategy = HedgedMarketMakerStrategy(StrategyConfig(strategy_mode="hedged-mm"), RiskConfig(max_market_notional=12, max_single_fill_notional=2))
     window = PriceWindow()
@@ -210,3 +224,25 @@ def test_hedged_mm_preserves_normal_two_sided_entry_when_pair_is_favorable() -> 
     intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
 
     assert {intent.outcome for intent in intents} == {"Up", "Down"}
+
+
+def test_hedged_mm_rejects_sub_minimum_notional_from_unpaired_room() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="hedged-mm"),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2, max_unpaired_notional=2, min_order_notional=1),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.shares["Up"] = 10
+    position.cost["Up"] = 2.0
+    position.shares["Down"] = 10
+    position.cost["Down"] = 0.5
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.05), "Down": book("down", 0.05)})
+
+    assert not intents
