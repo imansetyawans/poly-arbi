@@ -80,12 +80,13 @@ class HedgedTiltStrategy:
 
         target_cost = self._target_costs(signal)
         intents: list[OrderIntent] = []
+        planned_notional = 0.0
         for outcome in ("Up", "Down"):
             ask = books[outcome].best_ask
             if ask is None:
                 continue
             wanted = target_cost[outcome] - position.cost[outcome]
-            remaining_budget = self.risk.max_market_notional - position.total_cost
+            remaining_budget = self.risk.max_market_notional - position.total_cost - planned_notional
             notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
             if notional < self.risk.min_order_notional:
                 continue
@@ -117,6 +118,7 @@ class HedgedTiltStrategy:
                     reason=f"{'tilt' if is_tilt_side else 'hedge'} {signal.reason}",
                 )
             )
+            planned_notional += notional
         return intents
 
     def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
@@ -165,20 +167,24 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
             target_cost = {"Up": self.risk.max_market_notional / 2, "Down": self.risk.max_market_notional / 2}
 
         intents: list[OrderIntent] = []
+        planned_notional = 0.0
+        planned_cost = dict(position.cost)
         for outcome in self._order_priority(position, signal):
             ask = books[outcome].best_ask
             if ask is None:
                 continue
-            wanted = target_cost[outcome] - position.cost[outcome]
-            remaining_budget = self.risk.max_market_notional - position.total_cost
+            wanted = target_cost[outcome] - planned_cost[outcome]
+            remaining_budget = self.risk.max_market_notional - position.total_cost - planned_notional
             notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
-            if notional > 0 and not self._is_completion_side(outcome, position):
-                notional = min(notional, self._same_side_room(position))
+            other = "Down" if outcome == "Up" else "Up"
+            completes_planned_hedge = planned_cost[other] > 0 and planned_cost[outcome] <= 0
+            if notional > 0 and not completes_planned_hedge and not self._is_completion_side(outcome, position):
+                notional = min(notional, self._same_side_room(planned_cost))
             if notional <= 0:
                 continue
             if notional < self.risk.min_order_notional:
                 continue
-            if not self._price_is_allowed(outcome, ask, position, signal, up_ask, down_ask):
+            if not self._price_is_allowed(outcome, ask, notional, position, signal, up_ask, down_ask):
                 continue
             if notional / ask < market.min_order_size:
                 continue
@@ -194,6 +200,8 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
                     reason=f"hedged-mm {signal.reason}",
                 )
             )
+            planned_notional += notional
+            planned_cost[outcome] += notional
         return intents
 
     def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
@@ -235,9 +243,9 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
         other = "Down" if outcome == "Up" else "Up"
         return position.cost[other] > 0 and position.cost[outcome] <= 0
 
-    def _same_side_room(self, position: Position) -> float:
+    def _same_side_room(self, cost: dict[Literal["Up", "Down"], float]) -> float:
         cap = self._max_unpaired_notional()
-        current = abs(position.cost["Up"] - position.cost["Down"])
+        current = abs(cost["Up"] - cost["Down"])
         return max(0.0, cap - current)
 
     def _max_unpaired_notional(self) -> float:
@@ -249,6 +257,7 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
         self,
         outcome: Literal["Up", "Down"],
         ask: float,
+        notional: float,
         position: Position,
         signal: Signal,
         up_ask: float,
@@ -257,12 +266,31 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
         if self._is_flat(position):
             return up_ask + down_ask <= self.strategy.hedged_mm_max_pair_cost
         if not self._is_completion_side(outcome, position):
-            return True
+            if position.cost["Up"] <= 0 or position.cost["Down"] <= 0:
+                return True
+            return self._projected_pair_cost(position, outcome, ask, notional) <= self.strategy.profit_expansion_pair_cost
 
         held_side = "Down" if outcome == "Up" else "Up"
         held_avg = position.avg_price(held_side)
         completion_pair_cost = held_avg + ask
         return completion_pair_cost <= self._completion_pair_cost_limit(signal)
+
+    def _projected_pair_cost(
+        self,
+        position: Position,
+        outcome: Literal["Up", "Down"],
+        ask: float,
+        notional: float,
+    ) -> float:
+        projected: dict[Literal["Up", "Down"], float] = {}
+        for side in ("Up", "Down"):
+            cost = position.cost[side]
+            shares = position.shares[side]
+            if side == outcome:
+                cost += notional
+                shares += notional / ask
+            projected[side] = cost / shares if shares else 0.0
+        return projected["Up"] + projected["Down"]
 
     def _completion_pair_cost_limit(self, signal: Signal) -> float:
         if signal.seconds_elapsed >= self.strategy.rebalance_start_seconds:

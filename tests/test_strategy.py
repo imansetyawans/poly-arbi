@@ -226,6 +226,73 @@ def test_hedged_mm_preserves_normal_two_sided_entry_when_pair_is_favorable() -> 
     assert {intent.outcome for intent in intents} == {"Up", "Down"}
 
 
+def test_hedged_mm_blocks_expensive_profit_expansion_after_hedge_exists() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="hedged-mm", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 2
+    position.shares["Up"] = 2 / 0.55
+    position.cost["Down"] = 2
+    position.shares["Down"] = 2 / 0.52
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.55), "Down": book("down", 0.52)})
+
+    assert not intents
+
+
+def test_hedged_mm_allows_high_quality_profit_expansion_after_hedge_exists() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="hedged-mm", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 2
+    position.shares["Up"] = 2 / 0.40
+    position.cost["Down"] = 2
+    position.shares["Down"] = 2 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert intents
+    assert sum(intent.max_notional for intent in intents) <= 4
+
+
+def test_hedged_mm_reserves_remaining_budget_across_batch() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="pair-only", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2, min_order_notional=1),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 5
+    position.shares["Up"] = 5 / 0.20
+    position.cost["Down"] = 5
+    position.shares["Down"] = 5 / 0.20
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.20), "Down": book("down", 0.20)})
+
+    assert sum(intent.max_notional for intent in intents) == 2
+
+
 def test_hedged_mm_rejects_sub_minimum_notional_from_unpaired_room() -> None:
     strategy = HedgedMarketMakerStrategy(
         StrategyConfig(strategy_mode="hedged-mm"),

@@ -40,6 +40,7 @@ class StrategyConfig:
     starter_entry_cutoff_seconds: float = 90.0
     completion_pair_cost_mid: float = 1.05
     completion_pair_cost_late: float = 1.08
+    profit_expansion_pair_cost: float = 1.00
     bad_regime_window: int = 20
     bad_regime_min_completion_rate: float = 0.50
     bad_regime_guard_enabled: bool = True

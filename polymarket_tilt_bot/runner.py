@@ -239,6 +239,7 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         starter_entry_cutoff_seconds=args.starter_entry_cutoff_seconds,
         completion_pair_cost_mid=args.completion_pair_cost_mid,
         completion_pair_cost_late=args.completion_pair_cost_late,
+        profit_expansion_pair_cost=args.profit_expansion_pair_cost,
         bad_regime_window=args.bad_regime_window,
         bad_regime_min_completion_rate=args.bad_regime_min_completion_rate,
         bad_regime_guard_enabled=not args.disable_bad_regime_guard,
@@ -269,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--starter-entry-cutoff-seconds", type=float, default=90.0)
     run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
     run.add_argument("--completion-pair-cost-late", type=float, default=1.08)
+    run.add_argument("--profit-expansion-pair-cost", type=float, default=1.00)
     run.add_argument("--bad-regime-window", type=int, default=20)
     run.add_argument("--bad-regime-min-completion-rate", type=float, default=0.50)
     run.add_argument("--disable-bad-regime-guard", action="store_true")
