@@ -1,5 +1,32 @@
 from polymarket_tilt_bot.ledger import CsvLedger, SQLiteLedger
-from polymarket_tilt_bot.models import Fill, Position
+from polymarket_tilt_bot.models import Fill, Market, Position
+from polymarket_tilt_bot.runner import resolve_missing_positions
+
+
+def market(slug: str = "btc-updown-5m-1000", end_ts: int = 1300) -> Market:
+    return Market(
+        asset="BTC",
+        slug=slug,
+        condition_id=f"0x-{slug}",
+        title="Bitcoin Up or Down",
+        start_ts=end_ts - 300,
+        end_ts=end_ts,
+        up_token=f"up-{slug}",
+        down_token=f"down-{slug}",
+        accepting_orders=False,
+        closed=True,
+    )
+
+
+class StaticResolver:
+    def __init__(self, winners: dict[str, str], failing_slug: str | None = None) -> None:
+        self.winners = winners
+        self.failing_slug = failing_slug
+
+    def get_winner(self, market: Market):
+        if market.slug == self.failing_slug:
+            raise RuntimeError("boom")
+        return self.winners.get(market.slug)
 
 
 def test_daily_report_summarizes_resolved_positions(tmp_path) -> None:
@@ -43,6 +70,21 @@ def test_unresolved_positions_can_be_rebuilt_from_fills(tmp_path) -> None:
     assert positions[0].total_cost == 5
 
 
+def test_sqlite_ledger_can_lookup_recorded_market(tmp_path) -> None:
+    ledger = SQLiteLedger(str(tmp_path / "paper.sqlite"))
+    m = market()
+    try:
+        ledger.record_market(m, 1000)
+        found = ledger.get_market(m.slug)
+    finally:
+        ledger.close()
+
+    assert found is not None
+    assert found.slug == m.slug
+    assert found.end_ts == m.end_ts
+    assert found.up_token == m.up_token
+
+
 def test_csv_ledger_records_and_reports(tmp_path) -> None:
     ledger = CsvLedger(str(tmp_path / "paper_csv"))
     position = Position("m1", "0x1")
@@ -56,6 +98,55 @@ def test_csv_ledger_records_and_reports(tmp_path) -> None:
     assert report["summary"]["resolved_markets"] == 1
     assert report["summary"]["total_pnl"] == 6
     assert ledger.realized_pnl() == 6
+
+
+def test_csv_ledger_can_lookup_recorded_market(tmp_path) -> None:
+    ledger = CsvLedger(str(tmp_path / "paper_csv"))
+    m = market()
+    ledger.record_market(m, 1000)
+
+    found = ledger.get_market(m.slug)
+
+    assert found is not None
+    assert found.slug == m.slug
+    assert found.end_ts == m.end_ts
+    assert found.down_token == m.down_token
+
+
+def test_resolve_missing_uses_stored_fills_and_is_idempotent(tmp_path) -> None:
+    ledger = CsvLedger(str(tmp_path / "paper_csv"))
+    m = market("btc-updown-5m-1000", end_ts=1300)
+    ledger.record_market(m, 1000)
+    ledger.record_fill(Fill(m.slug, m.condition_id, "Down", m.down_token, 0.25, 20, 5, 1000))
+
+    first = resolve_missing_positions(ledger, object(), StaticResolver({m.slug: "Down"}), grace_seconds=20, now=1400)
+    second = resolve_missing_positions(ledger, object(), StaticResolver({m.slug: "Down"}), grace_seconds=20, now=1400)
+
+    assert first == 1
+    assert second == 0
+    assert ledger.is_resolved(m.slug)
+    assert ledger.daily_report()["summary"]["resolved_markets"] == 1
+
+
+def test_resolve_missing_keeps_going_after_one_market_fails(tmp_path) -> None:
+    ledger = CsvLedger(str(tmp_path / "paper_csv"))
+    bad = market("btc-updown-5m-1000", end_ts=1300)
+    good = market("btc-updown-5m-1600", end_ts=1900)
+    for item in [bad, good]:
+        ledger.record_market(item, 1000)
+        ledger.record_fill(Fill(item.slug, item.condition_id, "Up", item.up_token, 0.40, 10, 4, 1000))
+
+    resolved = resolve_missing_positions(
+        ledger,
+        object(),
+        StaticResolver({bad.slug: "Up", good.slug: "Up"}, failing_slug=bad.slug),
+        grace_seconds=20,
+        now=2000,
+    )
+
+    assert resolved == 1
+    assert not ledger.is_resolved(bad.slug)
+    assert ledger.is_resolved(good.slug)
 
 
 def test_daily_report_splits_both_sided_and_one_sided_pnl(tmp_path) -> None:

@@ -63,6 +63,8 @@ One-sided risk controls are enabled by default:
 --completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
 --completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
 --profit-expansion-pair-cost 1.00   # add size after both sides exist only when projected pair cost is attractive
+--resolution-grace-seconds 20       # wait this long after market end before settlement checks
+--resolution-poll-seconds 30        # throttle automatic settlement checks while the bot runs
 --bad-regime-window 20              # recent resolved markets to inspect
 --bad-regime-min-completion-rate .5 # pause new entries below this completion rate
 --disable-bad-regime-guard          # keep completion rules but disable new-entry pause
@@ -71,6 +73,11 @@ One-sided risk controls are enabled by default:
 ## Resolution And Daily PnL
 
 The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. In CSV mode it records the winning outcome and PnL decomposition in `resolutions.csv`.
+Resolution checks run on startup, during bot cycles, and on shutdown. If the bot was stopped before outcomes were posted, backfill missing settlements with:
+
+```powershell
+python -m polymarket_tilt_bot resolve-missing --db paper_trades_csv --storage csv
+```
 
 Print a report for all resolved markets:
 

@@ -37,6 +37,7 @@ class PaperTradingBot:
         self.positions = PositionBook()
         self.ledger = CsvLedger(config.runtime.database_path) if config.runtime.storage_mode == "csv" else SQLiteLedger(config.runtime.database_path)
         self.window = PriceWindow()
+        self._last_resolution_check = 0.0
 
     def close(self) -> None:
         self.ledger.close()
@@ -44,6 +45,7 @@ class PaperTradingBot:
     def run(self) -> None:
         LOGGER.info("starting paper bot: assets=%s cycles=%s db=%s", self.config.runtime.assets, self.config.runtime.cycles, self.config.runtime.database_path)
         try:
+            self._try_resolve_finished_positions(force=True)
             cycle = 0
             while self.config.runtime.cycles <= 0 or cycle < self.config.runtime.cycles:
                 try:
@@ -52,6 +54,8 @@ class PaperTradingBot:
                     LOGGER.warning("cycle skipped after recoverable API error: %s", exc)
                 except Exception:
                     LOGGER.exception("cycle skipped after unexpected error")
+                finally:
+                    self._try_resolve_finished_positions()
                 cycle += 1
                 total = "unlimited" if self.config.runtime.cycles <= 0 else str(self.config.runtime.cycles)
                 LOGGER.info("cycle %s/%s complete", cycle, total)
@@ -60,7 +64,7 @@ class PaperTradingBot:
         except KeyboardInterrupt:
             LOGGER.info("stopped by user")
         finally:
-            self._try_resolve_finished_positions()
+            self._try_resolve_finished_positions(force=True)
             self.close()
 
     def step(self) -> None:
@@ -120,29 +124,21 @@ class PaperTradingBot:
         resolved, completion_rate = self.ledger.recent_completion_rate(strategy.bad_regime_window)
         return resolved >= strategy.bad_regime_window and completion_rate < strategy.bad_regime_min_completion_rate
 
-    def _try_resolve_finished_positions(self) -> None:
+    def _try_resolve_finished_positions(self, force: bool = False) -> int:
         now = time.time()
-        seen = {position.market_slug: position for position in self.positions.all_positions()}
-        for stored_position in self.ledger.get_unresolved_positions():
-            seen.setdefault(stored_position.market_slug, stored_position)
-        for position in seen.values():
-            if position.total_cost <= 0:
-                continue
-            if self.ledger.is_resolved(position.market_slug):
-                continue
-            market = self._market_from_position(position.market_slug)
-            if market is None or now < market.end_ts + 20:
-                continue
-            winner = self.resolver.get_winner(market)
-            if winner is None:
-                continue
-            result = self.ledger.record_resolution(position, winner, now)
-            LOGGER.info("resolved %s winner=%s pnl=%.2f", position.market_slug, winner, result["pnl"])
+        if not force and now - self._last_resolution_check < self.config.runtime.resolution_poll_seconds:
+            return 0
+        self._last_resolution_check = now
+        return resolve_missing_positions(
+            ledger=self.ledger,
+            gamma=self.gamma,
+            resolver=self.resolver,
+            grace_seconds=self.config.runtime.resolution_grace_seconds,
+            now=now,
+        )
 
     def _market_from_position(self, slug: str) -> Market | None:
-        asset: Literal["BTC", "ETH"] = "ETH" if slug.startswith("eth-") else "BTC"
-        event = self.gamma.get_event_by_slug(slug)
-        return self.gamma.parse_crypto_market(event, asset) if event else None
+        return market_from_ledger_or_gamma(self.ledger, self.gamma, slug)
 
     def _log_market_state(self, market: Market, books, position, signal) -> None:
         up_book = books["Up"]
@@ -209,6 +205,53 @@ class PaperTradingBot:
         return total
 
 
+def market_from_ledger_or_gamma(ledger, gamma: GammaClient, slug: str) -> Market | None:
+    market = ledger.get_market(slug)
+    if market is not None:
+        return market
+    asset: Literal["BTC", "ETH"] = "ETH" if slug.startswith("eth-") else "BTC"
+    event = gamma.get_event_by_slug(slug)
+    return gamma.parse_crypto_market(event, asset) if event else None
+
+
+def resolve_missing_positions(
+    ledger,
+    gamma: GammaClient,
+    resolver: ResolutionClient,
+    grace_seconds: float,
+    now: float | None = None,
+) -> int:
+    timestamp = time.time() if now is None else now
+    resolved_count = 0
+    for position in ledger.get_unresolved_positions():
+        if position.total_cost <= 0 or ledger.is_resolved(position.market_slug):
+            continue
+        try:
+            market = market_from_ledger_or_gamma(ledger, gamma, position.market_slug)
+            if market is None:
+                LOGGER.warning("resolution pending %s: market metadata unavailable", position.market_slug)
+                continue
+            if timestamp < market.end_ts + grace_seconds:
+                continue
+            winner = resolver.get_winner(market)
+            if winner is None:
+                LOGGER.info("resolution pending %s: winner not posted yet", position.market_slug)
+                continue
+            result = ledger.record_resolution(position, winner, timestamp)
+            resolved_count += 1
+            LOGGER.info(
+                "resolved %s winner=%s pnl=%.2f paired_pnl=%.2f unpaired_pnl=%.2f",
+                position.market_slug,
+                winner,
+                result["pnl"],
+                result["paired_pnl"],
+                result["unpaired_pnl"],
+            )
+        except Exception as exc:
+            LOGGER.warning("resolution failed for %s: %s", position.market_slug, exc)
+    return resolved_count
+
+
 def parse_assets(raw: str) -> tuple[Literal["BTC", "ETH"], ...]:
     assets: list[Literal["BTC", "ETH"]] = []
     for part in raw.split(","):
@@ -226,6 +269,8 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         cycles=args.cycles,
         database_path=args.db,
         storage_mode=args.storage,
+        resolution_grace_seconds=args.resolution_grace_seconds,
+        resolution_poll_seconds=args.resolution_poll_seconds,
     )
     risk = RiskConfig(
         starting_balance=args.balance,
@@ -271,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
     run.add_argument("--completion-pair-cost-late", type=float, default=1.08)
     run.add_argument("--profit-expansion-pair-cost", type=float, default=1.00)
+    run.add_argument("--resolution-grace-seconds", type=float, default=20.0)
+    run.add_argument("--resolution-poll-seconds", type=float, default=30.0)
     run.add_argument("--bad-regime-window", type=int, default=20)
     run.add_argument("--bad-regime-min-completion-rate", type=float, default=0.50)
     run.add_argument("--disable-bad-regime-guard", action="store_true")
@@ -282,6 +329,11 @@ def main(argv: list[str] | None = None) -> int:
 
     scan = sub.add_parser("scan-once", help="Print currently tradable crypto 5m markets")
     scan.add_argument("--assets", type=parse_assets, default=("BTC", "ETH"), help="BTC, ETH, or BTC,ETH")
+
+    resolve = sub.add_parser("resolve-missing", help="Fetch and record missing paper resolutions")
+    resolve.add_argument("--db", default="paper_trades.sqlite")
+    resolve.add_argument("--storage", choices=["csv", "sqlite"], default="csv")
+    resolve.add_argument("--resolution-grace-seconds", type=float, default=20.0)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -339,6 +391,27 @@ def main(argv: list[str] | None = None) -> int:
                 f"{row['paired_pnl']:.4f},{row['unpaired_side']},{row['unpaired_pnl']:.4f},"
                 f"{row['up_shares']:.4f},{row['down_shares']:.4f}"
             )
+        return 0
+
+    if args.command == "resolve-missing":
+        runtime = RuntimeConfig(
+            database_path=args.db,
+            storage_mode=args.storage,
+            resolution_grace_seconds=args.resolution_grace_seconds,
+        )
+        http = HttpClient(runtime)
+        gamma = GammaClient(http)
+        ledger = CsvLedger(args.db) if args.storage == "csv" else SQLiteLedger(args.db)
+        try:
+            resolved_count = resolve_missing_positions(
+                ledger=ledger,
+                gamma=gamma,
+                resolver=ResolutionClient(gamma),
+                grace_seconds=args.resolution_grace_seconds,
+            )
+        finally:
+            ledger.close()
+        print(f"Resolved missing markets: {resolved_count}")
         return 0
 
     return 1

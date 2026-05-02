@@ -60,6 +60,8 @@ class RuntimeConfig:
     coingecko_base_url: str = "https://api.coingecko.com/api/v3"
     request_timeout: float = 10.0
     user_agent: str = "polymarket-hedged-tilt-paper-bot/0.1"
+    resolution_grace_seconds: float = 20.0
+    resolution_poll_seconds: float = 30.0
 
 
 @dataclass(frozen=True)

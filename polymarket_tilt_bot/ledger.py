@@ -302,6 +302,33 @@ class SQLiteLedger:
         )
         self.conn.commit()
 
+    def get_market(self, slug: str) -> Market | None:
+        row = self.conn.execute(
+            """
+            SELECT slug, condition_id, asset, title, start_ts, end_ts, up_token, down_token,
+                   resolution_source, price_to_beat
+            FROM markets
+            WHERE slug = ?
+            """,
+            (slug,),
+        ).fetchone()
+        if row is None:
+            return None
+        return Market(
+            asset=row["asset"],
+            slug=row["slug"],
+            condition_id=row["condition_id"],
+            title=row["title"],
+            start_ts=row["start_ts"],
+            end_ts=row["end_ts"],
+            up_token=row["up_token"],
+            down_token=row["down_token"],
+            accepting_orders=False,
+            closed=False,
+            resolution_source=row["resolution_source"] or "",
+            price_to_beat=row["price_to_beat"],
+        )
+
     def record_signal(self, signal: Signal, timestamp: float) -> None:
         self.conn.execute(
             """
@@ -522,6 +549,26 @@ class CsvLedger:
             "price_to_beat": market.price_to_beat if market.price_to_beat is not None else "",
             "first_seen_ts": timestamp,
         }])
+
+    def get_market(self, slug: str) -> Market | None:
+        for row in self._read("markets"):
+            if row["slug"] != slug:
+                continue
+            return Market(
+                asset=row["asset"],
+                slug=row["slug"],
+                condition_id=row["condition_id"],
+                title=row["title"],
+                start_ts=int(float(row["start_ts"])),
+                end_ts=int(float(row["end_ts"])),
+                up_token=row["up_token"],
+                down_token=row["down_token"],
+                accepting_orders=False,
+                closed=False,
+                resolution_source=row["resolution_source"],
+                price_to_beat=float(row["price_to_beat"]) if row["price_to_beat"] else None,
+            )
+        return None
 
     def record_signal(self, signal: Signal, timestamp: float) -> None:
         self._append("signals", [{
