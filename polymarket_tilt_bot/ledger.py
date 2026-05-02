@@ -88,6 +88,17 @@ def _cost_bucket(cost: float) -> str:
     return "12+"
 
 
+def _max_drawdown(pnls: list[float]) -> float:
+    peak = 0.0
+    equity = 0.0
+    max_drawdown = 0.0
+    for pnl in pnls:
+        equity += pnl
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    return max_drawdown
+
+
 def _build_report(rows: list[dict[str, object]], fill_rows: list[dict[str, object]]) -> dict[str, object]:
     fills_by_market: dict[str, list[dict[str, object]]] = {}
     for row in fill_rows:
@@ -103,24 +114,45 @@ def _build_report(rows: list[dict[str, object]], fill_rows: list[dict[str, objec
     both_sided_pnl = 0.0
     one_sided_pnl = 0.0
     failed_one_sided = 0
+    one_sided_loss_total = 0.0
+    one_sided_loss_count = 0
+    scaled_both_sided = 0
+    scaled_both_sided_pnl = 0.0
+    positive_pair_quality = 0
+    expensive_both_sided = 0
+    expensive_both_sided_pnl = 0.0
+    pnl_series = []
     timing_rows = []
     cost_rows = []
     for row in rows:
         result = json.loads(str(row["result_json"]))
         pnl = float(result["pnl"])
         cost = float(result["total_cost"])
+        pnl_series.append(pnl)
         total_pnl += pnl
         total_cost += cost
         wins += pnl > 0
         losses += pnl < 0
         is_both_sided = _is_both_sided(result)
+        pair_cost = float(result["up_avg"]) + float(result["down_avg"]) if is_both_sided else None
         both_sided += is_both_sided
         one_sided += not is_both_sided
         if is_both_sided:
             both_sided_pnl += pnl
+            if cost >= 8:
+                scaled_both_sided += 1
+                scaled_both_sided_pnl += pnl
+            if pair_cost is not None and pair_cost <= 1.0:
+                positive_pair_quality += 1
+            elif pair_cost is not None:
+                expensive_both_sided += 1
+                expensive_both_sided_pnl += pnl
         else:
             one_sided_pnl += pnl
             failed_one_sided += pnl < 0
+            if pnl < 0:
+                one_sided_loss_total += abs(pnl)
+                one_sided_loss_count += 1
         last_elapsed = _last_fill_elapsed(str(row["market_slug"]), fills_by_market)
         markets.append(
             {
@@ -133,6 +165,7 @@ def _build_report(rows: list[dict[str, object]], fill_rows: list[dict[str, objec
                 "unpaired_pnl": float(result["unpaired_pnl"]),
                 "up_shares": float(result["up_shares"]),
                 "down_shares": float(result["down_shares"]),
+                "pair_cost": pair_cost,
                 "both_sided": is_both_sided,
                 "last_fill_elapsed": last_elapsed,
             }
@@ -155,6 +188,13 @@ def _build_report(rows: list[dict[str, object]], fill_rows: list[dict[str, objec
             "both_sided_pnl": both_sided_pnl,
             "one_sided_pnl": one_sided_pnl,
             "failed_one_sided_markets": failed_one_sided,
+            "one_sided_average_loss": one_sided_loss_total / one_sided_loss_count if one_sided_loss_count else 0.0,
+            "scaled_both_sided_markets": scaled_both_sided,
+            "scaled_both_sided_pnl": scaled_both_sided_pnl,
+            "positive_pair_quality_markets": positive_pair_quality,
+            "expensive_both_sided_markets": expensive_both_sided,
+            "expensive_both_sided_pnl": expensive_both_sided_pnl,
+            "max_drawdown": _max_drawdown(pnl_series),
             "timing_buckets": _bucket_stats(timing_rows, ["0-60", "60-120", "120-180", "180-240", "240-285", "285+", "unknown"]),
             "cost_buckets": _bucket_stats(cost_rows, ["0-4", "4-6", "6-9", "9-12", "12+"]),
         },

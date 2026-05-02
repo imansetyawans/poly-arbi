@@ -24,6 +24,7 @@ def test_daily_report_summarizes_resolved_positions(tmp_path) -> None:
     assert report["summary"]["total_pnl"] == 6
     assert report["summary"]["one_sided_pnl"] == 6
     assert report["summary"]["both_sided_completion_rate"] == 0
+    assert report["summary"]["one_sided_average_loss"] == 0
     assert realized == 6
     assert report["markets"][0]["winner"] == "Up"
 
@@ -82,7 +83,14 @@ def test_daily_report_splits_both_sided_and_one_sided_pnl(tmp_path) -> None:
     assert summary["both_sided_pnl"] == 2
     assert summary["one_sided_pnl"] == -4
     assert summary["failed_one_sided_markets"] == 1
+    assert summary["one_sided_average_loss"] == 4
     assert summary["both_sided_completion_rate"] == 0.5
+    assert summary["scaled_both_sided_markets"] == 1
+    assert summary["scaled_both_sided_pnl"] == 2
+    assert summary["positive_pair_quality_markets"] == 1
+    assert summary["expensive_both_sided_markets"] == 0
+    assert summary["max_drawdown"] == 4
+    assert report["markets"][0]["pair_cost"] == 0.8
     assert summary["timing_buckets"]["180-240"]["markets"] == 1
     assert summary["cost_buckets"]["6-9"]["markets"] == 1
 

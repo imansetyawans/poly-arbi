@@ -293,7 +293,53 @@ def test_hedged_mm_reserves_remaining_budget_across_batch() -> None:
     assert sum(intent.max_notional for intent in intents) == 2
 
 
-def test_hedged_mm_rejects_sub_minimum_notional_from_unpaired_room() -> None:
+def test_hedged_mm_allows_lower_side_to_rebalance_at_imbalance_cap() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="pair-only", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2, max_unpaired_notional=2),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1050, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 6
+    position.shares["Up"] = 6 / 0.20
+    position.cost["Down"] = 4
+    position.shares["Down"] = 4 / 0.20
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.20), "Down": book("down", 0.20)})
+
+    assert intents
+    assert intents[0].outcome == "Down"
+    assert intents[0].max_notional == 2
+
+
+def test_hedged_mm_blocks_heavier_side_when_imbalance_is_at_cap() -> None:
+    strategy = HedgedMarketMakerStrategy(
+        StrategyConfig(strategy_mode="hedged-mm", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2, max_unpaired_notional=2),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.2, 1200, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 6
+    position.shares["Up"] = 6 / 0.20
+    position.cost["Down"] = 4
+    position.shares["Down"] = 4 / 0.20
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.20), "Down": book("down", 0.20)})
+
+    assert all(intent.outcome != "Up" for intent in intents)
+
+
+def test_hedged_mm_rejects_heavier_side_when_unpaired_room_is_sub_minimum() -> None:
     strategy = HedgedMarketMakerStrategy(
         StrategyConfig(strategy_mode="hedged-mm"),
         RiskConfig(max_market_notional=12, max_single_fill_notional=2, max_unpaired_notional=2, min_order_notional=1),
@@ -312,4 +358,4 @@ def test_hedged_mm_rejects_sub_minimum_notional_from_unpaired_room() -> None:
     signal = strategy.build_signal(m, tick, window)
     intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.05), "Down": book("down", 0.05)})
 
-    assert not intents
+    assert all(intent.outcome != "Up" for intent in intents)

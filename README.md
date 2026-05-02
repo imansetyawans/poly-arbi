@@ -38,6 +38,12 @@ Use `--cycles 0` to run continuously until you stop it with `Ctrl+C`:
 python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_csv --balance 1000 --max-market-notional 100 --max-single-fill 10
 ```
 
+Recommended small-balance balanced scale-in paper run:
+
+```powershell
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_balanced --storage csv --strategy-mode hedged-mm --balance 1000 --max-market-notional 12 --max-single-fill 2 --max-unpaired-notional 2 --profit-expansion-pair-cost 1.00
+```
+
 Useful strategy/storage flags:
 
 ```text
@@ -56,6 +62,7 @@ One-sided risk controls are enabled by default:
 --starter-entry-cutoff-seconds 90   # stop opening fresh flat positions after this elapsed time
 --completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
 --completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
+--profit-expansion-pair-cost 1.00   # add size after both sides exist only when projected pair cost is attractive
 --bad-regime-window 20              # recent resolved markets to inspect
 --bad-regime-min-completion-rate .5 # pause new entries below this completion rate
 --disable-bad-regime-guard          # keep completion rules but disable new-entry pause
@@ -77,8 +84,8 @@ Print a UTC-date filtered report:
 python -m polymarket_tilt_bot daily-report --db paper_trades_csv --date 2026-04-26
 ```
 
-The report includes total cost, total PnL, ROI, winner, paired hedge PnL, and unpaired tilt PnL per market.
-It also prints both-sided completion rate, both-sided PnL, one-sided PnL, failed one-sided markets, and PnL buckets by last-fill timing and total cost.
+The report includes total cost, total PnL, ROI, winner, pair cost, paired hedge PnL, and unpaired tilt PnL per market.
+It also prints both-sided completion rate, both-sided PnL, one-sided PnL, failed one-sided markets, one-sided average loss, scaled both-sided PnL, expensive both-sided markets, max drawdown, and PnL buckets by last-fill timing and total cost.
 
 Every cycle, the bot logs the current Polymarket odds and your paper position:
 
@@ -122,6 +129,25 @@ use momentum only as a small inventory bias
 ```
 
 It skips flat markets when `Up ask + Down ask` is too expensive, prioritizes the missing side after the first fill, blocks repeated same-side stacking above the one-sided cap, and avoids chasing very expensive odds unless needed to complete inventory.
+
+Balanced scale-in separates repair from profit expansion:
+
+```text
+repair mode: buy the missing side to reduce naked exposure, using the completion thresholds
+profit expansion: add more size only if projected Up avg + projected Down avg <= profit expansion limit
+```
+
+With the recommended small settings, the intended path is:
+
+```text
+$2 / $0  -> starter only
+$2 / $2  -> hedge formed
+$4 / $4  -> quality scale
+$6 / $4  -> allowed slight bias
+$6 / $6  -> balanced full size
+```
+
+It avoids patterns like `$6 / $0` and avoids expensive balanced pairs like `0.55 + 0.52 = 1.07`.
 
 ## Project Layout
 

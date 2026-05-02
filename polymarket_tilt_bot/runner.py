@@ -316,6 +316,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Both-sided PnL: ${summary['both_sided_pnl']:.2f}")
         print(f"One-sided PnL: ${summary['one_sided_pnl']:.2f}")
         print(f"Failed one-sided markets: {summary['failed_one_sided_markets']}")
+        print(f"One-sided average loss: ${summary['one_sided_average_loss']:.2f}")
+        print(f"Scaled both-sided markets: {summary['scaled_both_sided_markets']}")
+        print(f"Scaled both-sided PnL: ${summary['scaled_both_sided_pnl']:.2f}")
+        print(f"Positive pair-quality markets: {summary['positive_pair_quality_markets']}")
+        print(f"Expensive both-sided markets: {summary['expensive_both_sided_markets']}")
+        print(f"Expensive both-sided PnL: ${summary['expensive_both_sided_pnl']:.2f}")
+        print(f"Max drawdown: ${summary['max_drawdown']:.2f}")
         print("")
         print("PnL by last-fill timing bucket:")
         for label, data in summary["timing_buckets"].items():
@@ -325,10 +332,10 @@ def main(argv: list[str] | None = None) -> int:
         for label, data in summary["cost_buckets"].items():
             print(f"{label}: markets={data['markets']} pnl=${data['pnl']:.2f} roi={data['roi'] * 100:.2f}%")
         print("")
-        print("market,winner,pnl,cost,paired_pnl,unpaired_side,unpaired_pnl,up_shares,down_shares")
+        print("market,winner,pnl,cost,pair_cost,paired_pnl,unpaired_side,unpaired_pnl,up_shares,down_shares")
         for row in report_data["markets"]:
             print(
-                f"{row['market_slug']},{row['winner']},{row['pnl']:.4f},{row['cost']:.4f},"
+                f"{row['market_slug']},{row['winner']},{row['pnl']:.4f},{row['cost']:.4f},{row['pair_cost'] or ''},"
                 f"{row['paired_pnl']:.4f},{row['unpaired_side']},{row['unpaired_pnl']:.4f},"
                 f"{row['up_shares']:.4f},{row['down_shares']:.4f}"
             )
