@@ -1,7 +1,7 @@
 from polymarket_tilt_bot.config import RiskConfig, StrategyConfig
 from polymarket_tilt_bot.models import BookLevel, CryptoTick, Market, OrderBook, Position
 from polymarket_tilt_bot.price_window import PriceWindow
-from polymarket_tilt_bot.strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy
+from polymarket_tilt_bot.strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy, JetFadilStrategy
 
 
 def market() -> Market:
@@ -359,3 +359,79 @@ def test_hedged_mm_rejects_heavier_side_when_unpaired_room_is_sub_minimum() -> N
     intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.05), "Down": book("down", 0.05)})
 
     assert all(intent.outcome != "Up" for intent in intents)
+
+
+def test_jetfadil_enters_both_sides_when_flat_pair_is_favorable() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_entry_pair_cost=1.02),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.01, 1050, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.45), "Down": book("down", 0.56)})
+
+    assert {intent.outcome for intent in intents} == {"Up", "Down"}
+    assert all(intent.max_notional == 4 for intent in intents)
+
+
+def test_jetfadil_does_not_leave_flat_position_one_sided_when_order_too_small() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_entry_pair_cost=1.02),
+        RiskConfig(max_market_notional=12, max_single_fill_notional=2, max_unpaired_notional=2),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.01, 1050, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.45), "Down": book("down", 0.56)})
+
+    assert not intents
+
+
+def test_jetfadil_skips_flat_expensive_pair() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_entry_pair_cost=1.02),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.01, 1050, "test")
+    window.add(tick)
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.55), "Down": book("down", 0.56)})
+
+    assert not intents
+
+
+def test_jetfadil_scales_favored_side_with_controlled_tilt() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.02, jetfadil_max_directional_bias=0.35),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.4, 1200, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 8
+    position.shares["Up"] = 8 / 0.40
+    position.cost["Down"] = 8
+    position.shares["Down"] = 8 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert intents
+    assert intents[0].outcome == "Up"
+    assert intents[0].max_notional == 4

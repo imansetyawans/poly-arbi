@@ -44,11 +44,18 @@ Recommended small-balance balanced scale-in paper run:
 python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_balanced --storage csv --strategy-mode hedged-mm --balance 1000 --max-market-notional 12 --max-single-fill 2 --max-unpaired-notional 2 --profit-expansion-pair-cost 1.00
 ```
 
+Recommended JetFadil-style paper run:
+
+```powershell
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil --storage csv --strategy-mode jetfadil --balance 1000 --max-market-notional 24 --max-single-fill 4 --max-unpaired-notional 6 --profit-expansion-pair-cost 1.02 --jetfadil-entry-pair-cost 1.02
+```
+
 Useful strategy/storage flags:
 
 ```text
 --strategy-mode hedged-mm   # default, adaptive two-sided inventory with small bias
 --strategy-mode pair-only   # stricter, targets equal Up/Down cost
+--strategy-mode jetfadil    # more aggressive paired bursts with controlled directional tilt
 --strategy-mode current     # old hedged-tilt behavior
 --storage csv               # default, writes separate CSV files in the --db folder
 --storage sqlite            # legacy SQLite support
@@ -155,6 +162,8 @@ $6 / $6  -> balanced full size
 ```
 
 It avoids patterns like `$6 / $0` and avoids expensive balanced pairs like `0.55 + 0.52 = 1.07`.
+
+`jetfadil` mode is more aggressive than `hedged-mm`: it only starts when the pair is acceptable, but when it does start it places both sides in the same cycle, uses larger fills, and lets the favored side become larger within the configured unpaired cap. This mode is meant for paper testing JetFadil-like behavior, not for maximum capital protection.
 
 ## Project Layout
 

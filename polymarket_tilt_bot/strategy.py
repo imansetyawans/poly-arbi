@@ -303,3 +303,115 @@ class HedgedMarketMakerStrategy(HedgedTiltStrategy):
         if signal.seconds_elapsed >= self.strategy.hedge_completion_seconds:
             return self.strategy.completion_pair_cost_mid
         return self.strategy.hedged_mm_max_pair_cost
+
+
+class JetFadilStrategy(HedgedMarketMakerStrategy):
+    """More aggressive hedged-tilt mode inspired by JetFadil account behavior."""
+
+    def propose_orders(
+        self,
+        market: Market,
+        position: Position,
+        signal: Signal,
+        books: dict[Literal["Up", "Down"], OrderBook],
+        allow_starter: bool = True,
+    ) -> list[OrderIntent]:
+        if signal.seconds_remaining < self.risk.min_seconds_left:
+            return []
+        if signal.seconds_elapsed > self.risk.no_new_market_after_seconds:
+            return []
+        if position.total_cost >= self.risk.max_market_notional:
+            return []
+        if self._is_flat(position) and not allow_starter:
+            return []
+
+        up_ask = books["Up"].best_ask
+        down_ask = books["Down"].best_ask
+        if up_ask is None or down_ask is None:
+            return []
+        if self._is_flat(position) and up_ask + down_ask > self.strategy.jetfadil_entry_pair_cost:
+            return []
+
+        target_cost = self._target_costs(signal)
+        intents: list[OrderIntent] = []
+        planned_notional = 0.0
+        planned_cost = dict(position.cost)
+        planned_shares = dict(position.shares)
+        for outcome in self._order_priority(position, signal):
+            ask = books[outcome].best_ask
+            if ask is None:
+                continue
+            wanted = target_cost[outcome] - planned_cost[outcome]
+            remaining_budget = self.risk.max_market_notional - position.total_cost - planned_notional
+            notional = min(wanted, remaining_budget, self.risk.max_single_fill_notional)
+            if notional <= 0:
+                continue
+
+            other = "Down" if outcome == "Up" else "Up"
+            is_completion = planned_cost[other] > 0 and planned_cost[outcome] <= 0
+            if planned_cost["Up"] > 0 and planned_cost["Down"] > 0 and not is_completion:
+                notional = min(notional, self._imbalance_room_for(outcome, planned_cost))
+            if notional < self.risk.min_order_notional:
+                continue
+            if not self._price_is_allowed(outcome, ask, notional, position, planned_cost, planned_shares, signal, up_ask, down_ask):
+                continue
+            if notional / ask < market.min_order_size:
+                continue
+
+            intents.append(
+                OrderIntent(
+                    market_slug=market.slug,
+                    outcome=outcome,
+                    token_id=market.up_token if outcome == "Up" else market.down_token,
+                    max_notional=notional,
+                    limit_price=round(min(0.999, ask + self.strategy.price_edge_buffer), 3),
+                    reason=f"jetfadil {signal.reason}",
+                )
+            )
+            planned_notional += notional
+            planned_cost[outcome] += notional
+            planned_shares[outcome] += notional / ask
+
+        if self._is_flat(position) and {intent.outcome for intent in intents} != {"Up", "Down"}:
+            return []
+        return intents
+
+    def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
+        half = self.risk.max_market_notional / 2.0
+        bias = min(self.strategy.jetfadil_max_directional_bias, signal.confidence * self.strategy.jetfadil_max_directional_bias * 1.8)
+        target = {"Up": half, "Down": half}
+        target[signal.direction] = half * (1.0 + bias)
+        target["Down" if signal.direction == "Up" else "Up"] = half * (1.0 - bias)
+        return target
+
+    def _order_priority(self, position: Position, signal: Signal) -> list[Literal["Up", "Down"]]:
+        if position.cost["Up"] <= 0 and position.cost["Down"] > 0:
+            return ["Up", "Down"]
+        if position.cost["Down"] <= 0 and position.cost["Up"] > 0:
+            return ["Down", "Up"]
+        if position.cost["Up"] > 0 and position.cost["Down"] > 0:
+            if position.cost["Up"] > position.cost["Down"] + self._max_unpaired_notional():
+                return ["Down", "Up"]
+            if position.cost["Down"] > position.cost["Up"] + self._max_unpaired_notional():
+                return ["Up", "Down"]
+        return [signal.direction, "Down" if signal.direction == "Up" else "Up"]
+
+    def _price_is_allowed(
+        self,
+        outcome: Literal["Up", "Down"],
+        ask: float,
+        notional: float,
+        position: Position,
+        planned_cost: dict[Literal["Up", "Down"], float],
+        planned_shares: dict[Literal["Up", "Down"], float],
+        signal: Signal,
+        up_ask: float,
+        down_ask: float,
+    ) -> bool:
+        if self._is_flat(position):
+            return up_ask + down_ask <= self.strategy.jetfadil_entry_pair_cost
+        if planned_cost["Up"] <= 0 or planned_cost["Down"] <= 0:
+            held_side = "Down" if outcome == "Up" else "Up"
+            held_avg = position.avg_price(held_side)
+            return held_avg + ask <= self._completion_pair_cost_limit(signal)
+        return self._projected_pair_cost(planned_cost, planned_shares, outcome, ask, notional) <= self.strategy.profit_expansion_pair_cost

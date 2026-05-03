@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-StrategyMode = Literal["current", "hedged-mm", "pair-only"]
+StrategyMode = Literal["current", "hedged-mm", "pair-only", "jetfadil"]
 StorageMode = Literal["csv", "sqlite"]
 
 
@@ -41,6 +41,8 @@ class StrategyConfig:
     completion_pair_cost_mid: float = 1.05
     completion_pair_cost_late: float = 1.08
     profit_expansion_pair_cost: float = 1.00
+    jetfadil_entry_pair_cost: float = 1.02
+    jetfadil_max_directional_bias: float = 0.35
     bad_regime_window: int = 20
     bad_regime_min_completion_rate: float = 0.50
     bad_regime_guard_enabled: bool = True

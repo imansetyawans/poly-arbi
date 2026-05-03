@@ -14,7 +14,7 @@ from .models import Market
 from .paper_broker import PaperBroker
 from .price_window import PriceWindow
 from .resolution import ResolutionClient
-from .strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy
+from .strategy import HedgedMarketMakerStrategy, HedgedTiltStrategy, JetFadilStrategy
 
 
 LOGGER = logging.getLogger("polymarket_tilt_bot")
@@ -29,7 +29,9 @@ class PaperTradingBot:
         self.prices = BinanceWebSocketPriceClient(config.runtime.assets)
         self.scanner = MarketScanner(self.gamma)
         self.resolver = ResolutionClient(self.gamma)
-        if config.strategy.strategy_mode in {"hedged-mm", "pair-only"}:
+        if config.strategy.strategy_mode == "jetfadil":
+            self.strategy = JetFadilStrategy(config.strategy, config.risk)
+        elif config.strategy.strategy_mode in {"hedged-mm", "pair-only"}:
             self.strategy = HedgedMarketMakerStrategy(config.strategy, config.risk)
         else:
             self.strategy = HedgedTiltStrategy(config.strategy, config.risk)
@@ -285,6 +287,8 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         completion_pair_cost_mid=args.completion_pair_cost_mid,
         completion_pair_cost_late=args.completion_pair_cost_late,
         profit_expansion_pair_cost=args.profit_expansion_pair_cost,
+        jetfadil_entry_pair_cost=args.jetfadil_entry_pair_cost,
+        jetfadil_max_directional_bias=args.jetfadil_max_directional_bias,
         bad_regime_window=args.bad_regime_window,
         bad_regime_min_completion_rate=args.bad_regime_min_completion_rate,
         bad_regime_guard_enabled=not args.disable_bad_regime_guard,
@@ -306,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--poll-seconds", type=float, default=5.0)
     run.add_argument("--db", default="paper_trades.sqlite")
     run.add_argument("--storage", choices=["csv", "sqlite"], default="csv")
-    run.add_argument("--strategy-mode", choices=["current", "hedged-mm", "pair-only"], default="hedged-mm")
+    run.add_argument("--strategy-mode", choices=["current", "hedged-mm", "pair-only", "jetfadil"], default="hedged-mm")
     run.add_argument("--balance", type=float, default=1_000.0)
     run.add_argument("--max-market-notional", type=float, default=100.0)
     run.add_argument("--max-single-fill", type=float, default=10.0)
@@ -316,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
     run.add_argument("--completion-pair-cost-late", type=float, default=1.08)
     run.add_argument("--profit-expansion-pair-cost", type=float, default=1.00)
+    run.add_argument("--jetfadil-entry-pair-cost", type=float, default=1.02)
+    run.add_argument("--jetfadil-max-directional-bias", type=float, default=0.35)
     run.add_argument("--resolution-grace-seconds", type=float, default=20.0)
     run.add_argument("--resolution-poll-seconds", type=float, default=30.0)
     run.add_argument("--bad-regime-window", type=int, default=20)
