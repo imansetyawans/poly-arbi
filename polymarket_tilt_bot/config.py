@@ -41,8 +41,13 @@ class StrategyConfig:
     completion_pair_cost_mid: float = 1.05
     completion_pair_cost_late: float = 1.08
     profit_expansion_pair_cost: float = 1.00
-    jetfadil_entry_pair_cost: float = 1.02
-    jetfadil_max_directional_bias: float = 0.35
+    jetfadil_entry_pair_cost: float = 1.00
+    jetfadil_early_entry_pair_cost: float = 0.98
+    jetfadil_deep_value_pair_cost: float = 0.98
+    jetfadil_min_entry_seconds: float = 5.0
+    jetfadil_min_confidence: float = 0.05
+    jetfadil_strong_tilt_confidence: float = 0.35
+    jetfadil_max_directional_bias: float = 0.20
     bad_regime_window: int = 20
     bad_regime_min_completion_rate: float = 0.50
     bad_regime_guard_enabled: bool = True

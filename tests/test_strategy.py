@@ -363,7 +363,7 @@ def test_hedged_mm_rejects_heavier_side_when_unpaired_room_is_sub_minimum() -> N
 
 def test_jetfadil_enters_both_sides_when_flat_pair_is_favorable() -> None:
     strategy = JetFadilStrategy(
-        StrategyConfig(strategy_mode="jetfadil", jetfadil_entry_pair_cost=1.02),
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_entry_pair_cost=1.00, jetfadil_min_confidence=0.0),
         RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
     )
     window = PriceWindow()
@@ -373,7 +373,7 @@ def test_jetfadil_enters_both_sides_when_flat_pair_is_favorable() -> None:
     window.add(tick)
 
     signal = strategy.build_signal(m, tick, window)
-    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.45), "Down": book("down", 0.56)})
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.45), "Down": book("down", 0.55)})
 
     assert {intent.outcome for intent in intents} == {"Up", "Down"}
     assert all(intent.max_notional == 4 for intent in intents)
@@ -413,9 +413,62 @@ def test_jetfadil_skips_flat_expensive_pair() -> None:
     assert not intents
 
 
+def test_jetfadil_waits_for_very_cheap_pair_before_early_entry() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_min_entry_seconds=10, jetfadil_early_entry_pair_cost=0.98, jetfadil_min_confidence=0.0),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    m = market()
+    signal = strategy.build_signal(m, CryptoTick("BTC", 100.01, 1002, "test"), PriceWindow())
+
+    normal_pair = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.50), "Down": book("down", 0.50)})
+    cheap_pair = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.48), "Down": book("down", 0.50)})
+
+    assert not normal_pair
+    assert {intent.outcome for intent in cheap_pair} == {"Up", "Down"}
+
+
+def test_jetfadil_requires_confidence_unless_pair_is_deep_value() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_min_confidence=0.10, jetfadil_deep_value_pair_cost=0.98),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    m = market()
+    signal = strategy.build_signal(m, CryptoTick("BTC", 100.0, 1020, "test"), PriceWindow())
+
+    low_edge_pair = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.50), "Down": book("down", 0.50)})
+    deep_value_pair = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.48), "Down": book("down", 0.50)})
+
+    assert not low_edge_pair
+    assert {intent.outcome for intent in deep_value_pair} == {"Up", "Down"}
+
+
+def test_jetfadil_stays_balanced_until_tilt_confidence_is_strong() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00, jetfadil_strong_tilt_confidence=0.35),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.05, 1200, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 12
+    position.shares["Up"] = 12 / 0.40
+    position.cost["Down"] = 8
+    position.shares["Down"] = 8 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert intents
+    assert intents[0].outcome == "Down"
+
+
 def test_jetfadil_scales_favored_side_with_controlled_tilt() -> None:
     strategy = JetFadilStrategy(
-        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.02, jetfadil_max_directional_bias=0.35),
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00, jetfadil_strong_tilt_confidence=0.20, jetfadil_max_directional_bias=0.20),
         RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
     )
     window = PriceWindow()

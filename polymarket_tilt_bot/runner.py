@@ -288,6 +288,11 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         completion_pair_cost_late=args.completion_pair_cost_late,
         profit_expansion_pair_cost=args.profit_expansion_pair_cost,
         jetfadil_entry_pair_cost=args.jetfadil_entry_pair_cost,
+        jetfadil_early_entry_pair_cost=args.jetfadil_early_entry_pair_cost,
+        jetfadil_deep_value_pair_cost=args.jetfadil_deep_value_pair_cost,
+        jetfadil_min_entry_seconds=args.jetfadil_min_entry_seconds,
+        jetfadil_min_confidence=args.jetfadil_min_confidence,
+        jetfadil_strong_tilt_confidence=args.jetfadil_strong_tilt_confidence,
         jetfadil_max_directional_bias=args.jetfadil_max_directional_bias,
         bad_regime_window=args.bad_regime_window,
         bad_regime_min_completion_rate=args.bad_regime_min_completion_rate,
@@ -320,8 +325,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--completion-pair-cost-mid", type=float, default=1.05)
     run.add_argument("--completion-pair-cost-late", type=float, default=1.08)
     run.add_argument("--profit-expansion-pair-cost", type=float, default=1.00)
-    run.add_argument("--jetfadil-entry-pair-cost", type=float, default=1.02)
-    run.add_argument("--jetfadil-max-directional-bias", type=float, default=0.35)
+    run.add_argument("--jetfadil-entry-pair-cost", type=float, default=1.00)
+    run.add_argument("--jetfadil-early-entry-pair-cost", type=float, default=0.98)
+    run.add_argument("--jetfadil-deep-value-pair-cost", type=float, default=0.98)
+    run.add_argument("--jetfadil-min-entry-seconds", type=float, default=5.0)
+    run.add_argument("--jetfadil-min-confidence", type=float, default=0.05)
+    run.add_argument("--jetfadil-strong-tilt-confidence", type=float, default=0.35)
+    run.add_argument("--jetfadil-max-directional-bias", type=float, default=0.20)
     run.add_argument("--resolution-grace-seconds", type=float, default=20.0)
     run.add_argument("--resolution-poll-seconds", type=float, default=30.0)
     run.add_argument("--bad-regime-window", type=int, default=20)

@@ -47,7 +47,7 @@ python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-secon
 Recommended JetFadil-style paper run:
 
 ```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil --storage csv --strategy-mode jetfadil --balance 1000 --max-market-notional 24 --max-single-fill 4 --max-unpaired-notional 6 --profit-expansion-pair-cost 1.02 --jetfadil-entry-pair-cost 1.02
+python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil_v2 --storage csv --strategy-mode jetfadil --balance 300 --max-market-notional 18 --max-single-fill 3 --max-unpaired-notional 3 --profit-expansion-pair-cost 1.00 --jetfadil-entry-pair-cost 1.00 --jetfadil-early-entry-pair-cost 0.98 --jetfadil-deep-value-pair-cost 0.98 --jetfadil-min-entry-seconds 5 --jetfadil-min-confidence 0.05 --jetfadil-strong-tilt-confidence 0.35 --jetfadil-max-directional-bias 0.20
 ```
 
 Useful strategy/storage flags:
@@ -70,6 +70,10 @@ One-sided risk controls are enabled by default:
 --completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
 --completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
 --profit-expansion-pair-cost 1.00   # add size after both sides exist only when projected pair cost is attractive
+--jetfadil-entry-pair-cost 1.00     # JetFadil mode flat-entry pair ceiling
+--jetfadil-min-entry-seconds 5      # wait for early candle information unless the pair is very cheap
+--jetfadil-min-confidence .05       # require a small signal unless the pair is deep value
+--jetfadil-strong-tilt-confidence .35 # only add directional tilt when confidence is strong
 --resolution-grace-seconds 20       # wait this long after market end before settlement checks
 --resolution-poll-seconds 30        # throttle automatic settlement checks while the bot runs
 --bad-regime-window 20              # recent resolved markets to inspect

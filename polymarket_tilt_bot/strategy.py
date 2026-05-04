@@ -329,7 +329,7 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
         down_ask = books["Down"].best_ask
         if up_ask is None or down_ask is None:
             return []
-        if self._is_flat(position) and up_ask + down_ask > self.strategy.jetfadil_entry_pair_cost:
+        if self._is_flat(position) and not self._flat_entry_is_allowed(signal, up_ask + down_ask):
             return []
 
         target_cost = self._target_costs(signal)
@@ -378,11 +378,24 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
 
     def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
         half = self.risk.max_market_notional / 2.0
-        bias = min(self.strategy.jetfadil_max_directional_bias, signal.confidence * self.strategy.jetfadil_max_directional_bias * 1.8)
+        if signal.confidence < self.strategy.jetfadil_strong_tilt_confidence:
+            bias = 0.0
+        else:
+            confidence_room = max(1.0 - self.strategy.jetfadil_strong_tilt_confidence, 0.01)
+            bias = self.strategy.jetfadil_max_directional_bias * min(1.0, (signal.confidence - self.strategy.jetfadil_strong_tilt_confidence) / confidence_room)
         target = {"Up": half, "Down": half}
         target[signal.direction] = half * (1.0 + bias)
         target["Down" if signal.direction == "Up" else "Up"] = half * (1.0 - bias)
         return target
+
+    def _flat_entry_is_allowed(self, signal: Signal, pair_cost: float) -> bool:
+        if pair_cost > self.strategy.jetfadil_entry_pair_cost:
+            return False
+        if signal.seconds_elapsed < self.strategy.jetfadil_min_entry_seconds and pair_cost > self.strategy.jetfadil_early_entry_pair_cost:
+            return False
+        if signal.confidence < self.strategy.jetfadil_min_confidence and pair_cost > self.strategy.jetfadil_deep_value_pair_cost:
+            return False
+        return True
 
     def _order_priority(self, position: Position, signal: Signal) -> list[Literal["Up", "Down"]]:
         if position.cost["Up"] <= 0 and position.cost["Down"] > 0:
@@ -409,7 +422,7 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
         down_ask: float,
     ) -> bool:
         if self._is_flat(position):
-            return up_ask + down_ask <= self.strategy.jetfadil_entry_pair_cost
+            return self._flat_entry_is_allowed(signal, up_ask + down_ask)
         if planned_cost["Up"] <= 0 or planned_cost["Down"] <= 0:
             held_side = "Down" if outcome == "Up" else "Up"
             held_avg = position.avg_price(held_side)
