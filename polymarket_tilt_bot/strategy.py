@@ -322,6 +322,8 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
             return []
         if position.total_cost >= self.risk.max_market_notional:
             return []
+        if self._is_flat(position) and signal.seconds_elapsed > self.strategy.jetfadil_starter_entry_cutoff_seconds:
+            return []
         if self._is_flat(position) and not allow_starter:
             return []
 
@@ -332,7 +334,7 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
         if self._is_flat(position) and not self._flat_entry_is_allowed(signal, up_ask + down_ask):
             return []
 
-        target_cost = self._target_costs(signal)
+        target_cost = self._target_costs(signal, allow_tilt=self._paired_core_is_complete(position.cost))
         intents: list[OrderIntent] = []
         planned_notional = 0.0
         planned_cost = dict(position.cost)
@@ -374,11 +376,14 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
 
         if self._is_flat(position) and {intent.outcome for intent in intents} != {"Up", "Down"}:
             return []
+        if self._has_pair(position.cost) and not self._paired_core_is_complete(position.cost):
+            if self._matched_pair_cost(planned_cost) <= self._matched_pair_cost(position.cost):
+                return []
         return intents
 
-    def _target_costs(self, signal: Signal) -> dict[Literal["Up", "Down"], float]:
+    def _target_costs(self, signal: Signal, allow_tilt: bool = True) -> dict[Literal["Up", "Down"], float]:
         half = self.risk.max_market_notional / 2.0
-        if signal.confidence < self.strategy.jetfadil_strong_tilt_confidence:
+        if not allow_tilt or signal.confidence < self.strategy.jetfadil_strong_tilt_confidence:
             bias = 0.0
         else:
             confidence_room = max(1.0 - self.strategy.jetfadil_strong_tilt_confidence, 0.01)
@@ -403,6 +408,12 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
         if position.cost["Down"] <= 0 and position.cost["Up"] > 0:
             return ["Down", "Up"]
         if position.cost["Up"] > 0 and position.cost["Down"] > 0:
+            if not self._paired_core_is_complete(position.cost):
+                if position.cost["Up"] < position.cost["Down"]:
+                    return ["Up", "Down"]
+                if position.cost["Down"] < position.cost["Up"]:
+                    return ["Down", "Up"]
+                return ["Up", "Down"]
             if position.cost["Up"] > position.cost["Down"] + self._max_unpaired_notional():
                 return ["Down", "Up"]
             if position.cost["Down"] > position.cost["Up"] + self._max_unpaired_notional():
@@ -427,4 +438,19 @@ class JetFadilStrategy(HedgedMarketMakerStrategy):
             held_side = "Down" if outcome == "Up" else "Up"
             held_avg = position.avg_price(held_side)
             return held_avg + ask <= self._completion_pair_cost_limit(signal)
-        return self._projected_pair_cost(planned_cost, planned_shares, outcome, ask, notional) <= self.strategy.profit_expansion_pair_cost
+        return self._projected_pair_cost(planned_cost, planned_shares, outcome, ask, notional) <= self._profit_expansion_pair_cost_limit(signal)
+
+    def _has_pair(self, cost: dict[Literal["Up", "Down"], float]) -> bool:
+        return cost["Up"] > 0 and cost["Down"] > 0
+
+    def _matched_pair_cost(self, cost: dict[Literal["Up", "Down"], float]) -> float:
+        return 2.0 * min(cost["Up"], cost["Down"])
+
+    def _paired_core_is_complete(self, cost: dict[Literal["Up", "Down"], float]) -> bool:
+        fraction = min(1.0, max(0.0, self.strategy.jetfadil_core_pair_fraction))
+        return self._matched_pair_cost(cost) >= self.risk.max_market_notional * fraction
+
+    def _profit_expansion_pair_cost_limit(self, signal: Signal) -> float:
+        if signal.seconds_elapsed >= self.strategy.jetfadil_late_expansion_seconds:
+            return self.strategy.profit_expansion_pair_cost
+        return min(self.strategy.profit_expansion_pair_cost, self.strategy.jetfadil_pre_late_expansion_pair_cost)

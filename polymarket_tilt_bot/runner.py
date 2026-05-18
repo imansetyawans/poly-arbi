@@ -294,6 +294,10 @@ def build_config(args: argparse.Namespace) -> BotConfig:
         jetfadil_min_confidence=args.jetfadil_min_confidence,
         jetfadil_strong_tilt_confidence=args.jetfadil_strong_tilt_confidence,
         jetfadil_max_directional_bias=args.jetfadil_max_directional_bias,
+        jetfadil_starter_entry_cutoff_seconds=args.jetfadil_starter_entry_cutoff_seconds,
+        jetfadil_core_pair_fraction=args.jetfadil_core_pair_fraction,
+        jetfadil_pre_late_expansion_pair_cost=args.jetfadil_pre_late_expansion_pair_cost,
+        jetfadil_late_expansion_seconds=args.jetfadil_late_expansion_seconds,
         bad_regime_window=args.bad_regime_window,
         bad_regime_min_completion_rate=args.bad_regime_min_completion_rate,
         bad_regime_guard_enabled=not args.disable_bad_regime_guard,
@@ -332,6 +336,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--jetfadil-min-confidence", type=float, default=0.05)
     run.add_argument("--jetfadil-strong-tilt-confidence", type=float, default=0.35)
     run.add_argument("--jetfadil-max-directional-bias", type=float, default=0.20)
+    run.add_argument("--jetfadil-starter-entry-cutoff-seconds", type=float, default=240.0)
+    run.add_argument("--jetfadil-core-pair-fraction", type=float, default=0.80)
+    run.add_argument("--jetfadil-pre-late-expansion-pair-cost", type=float, default=0.85)
+    run.add_argument("--jetfadil-late-expansion-seconds", type=float, default=240.0)
     run.add_argument("--resolution-grace-seconds", type=float, default=20.0)
     run.add_argument("--resolution-poll-seconds", type=float, default=30.0)
     run.add_argument("--bad-regime-window", type=int, default=20)

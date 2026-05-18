@@ -47,7 +47,7 @@ python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-secon
 Recommended JetFadil-style paper run:
 
 ```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil_v2 --storage csv --strategy-mode jetfadil --balance 300 --max-market-notional 18 --max-single-fill 3 --max-unpaired-notional 3 --profit-expansion-pair-cost 1.00 --jetfadil-entry-pair-cost 1.00 --jetfadil-early-entry-pair-cost 0.98 --jetfadil-deep-value-pair-cost 0.98 --jetfadil-min-entry-seconds 5 --jetfadil-min-confidence 0.05 --jetfadil-strong-tilt-confidence 0.35 --jetfadil-max-directional-bias 0.20
+python -m polymarket_tilt_bot run-paper --assets BTC --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil_v4 --storage csv --strategy-mode jetfadil --balance 300 --max-market-notional 18 --max-single-fill 3 --max-unpaired-notional 2 --profit-expansion-pair-cost 0.98 --jetfadil-entry-pair-cost 0.98 --jetfadil-early-entry-pair-cost 0.95 --jetfadil-deep-value-pair-cost 0.95 --jetfadil-min-entry-seconds 60 --jetfadil-min-confidence 0.05 --jetfadil-strong-tilt-confidence 0.50 --jetfadil-max-directional-bias 0.10 --jetfadil-starter-entry-cutoff-seconds 240 --jetfadil-core-pair-fraction 0.80 --jetfadil-pre-late-expansion-pair-cost 0.85 --jetfadil-late-expansion-seconds 240
 ```
 
 Useful strategy/storage flags:
@@ -74,6 +74,10 @@ One-sided risk controls are enabled by default:
 --jetfadil-min-entry-seconds 5      # wait for early candle information unless the pair is very cheap
 --jetfadil-min-confidence .05       # require a small signal unless the pair is deep value
 --jetfadil-strong-tilt-confidence .35 # only add directional tilt when confidence is strong
+--jetfadil-starter-entry-cutoff-seconds 240 # avoid fresh JetFadil starters in the final minute
+--jetfadil-core-pair-fraction .80   # build this much matched paired cost before allowing tilt
+--jetfadil-pre-late-expansion-pair-cost .85 # require deep value before normal last-minute expansion
+--jetfadil-late-expansion-seconds 240 # relax back to profit-expansion threshold in the final minute
 --resolution-grace-seconds 20       # wait this long after market end before settlement checks
 --resolution-poll-seconds 30        # throttle automatic settlement checks while the bot runs
 --bad-regime-window 20              # recent resolved markets to inspect
@@ -167,7 +171,7 @@ $6 / $6  -> balanced full size
 
 It avoids patterns like `$6 / $0` and avoids expensive balanced pairs like `0.55 + 0.52 = 1.07`.
 
-`jetfadil` mode is more aggressive than `hedged-mm`: it only starts when the pair is acceptable, but when it does start it places both sides in the same cycle, uses larger fills, and lets the favored side become larger within the configured unpaired cap. This mode is meant for paper testing JetFadil-like behavior, not for maximum capital protection.
+`jetfadil` mode is more aggressive than `hedged-mm`: it only starts when the pair is acceptable, places both sides in the same cycle, builds a matched paired core before allowing tilt, uses stricter non-late expansion rules, and keeps broader expansion for the final minute when the pair is still attractive. This mode is meant for paper testing JetFadil-like behavior, not for maximum capital protection.
 
 ## Project Layout
 

@@ -48,6 +48,10 @@ class StrategyConfig:
     jetfadil_min_confidence: float = 0.05
     jetfadil_strong_tilt_confidence: float = 0.35
     jetfadil_max_directional_bias: float = 0.20
+    jetfadil_starter_entry_cutoff_seconds: float = 240.0
+    jetfadil_core_pair_fraction: float = 0.80
+    jetfadil_pre_late_expansion_pair_cost: float = 0.85
+    jetfadil_late_expansion_seconds: float = 240.0
     bad_regime_window: int = 20
     bad_regime_min_completion_rate: float = 0.50
     bad_regime_guard_enabled: bool = True

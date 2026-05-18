@@ -466,6 +466,119 @@ def test_jetfadil_stays_balanced_until_tilt_confidence_is_strong() -> None:
     assert intents[0].outcome == "Down"
 
 
+def test_jetfadil_blocks_late_flat_starter_after_cutoff() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", jetfadil_starter_entry_cutoff_seconds=240, jetfadil_min_confidence=0.0),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    m = market()
+    signal = strategy.build_signal(m, CryptoTick("BTC", 100.01, 1245, "test"), PriceWindow())
+
+    intents = strategy.propose_orders(m, Position(m.slug, m.condition_id), signal, {"Up": book("up", 0.45), "Down": book("down", 0.50)})
+
+    assert not intents
+
+
+def test_jetfadil_keeps_core_balanced_before_allowing_tilt() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00, jetfadil_strong_tilt_confidence=0.20),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.4, 1250, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 8
+    position.shares["Up"] = 8 / 0.40
+    position.cost["Down"] = 8
+    position.shares["Down"] = 8 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert [intent.outcome for intent in intents] == ["Up", "Down"]
+    assert all(intent.max_notional == 4 for intent in intents)
+
+
+def test_jetfadil_rejects_one_sided_core_expansion() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00, jetfadil_strong_tilt_confidence=0.20),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.4, 1250, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 3
+    position.shares["Up"] = 3 / 0.40
+    position.cost["Down"] = 3
+    position.shares["Down"] = 3 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.999)})
+
+    assert not intents
+
+
+def test_jetfadil_rebalances_lower_side_before_core_is_complete() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    tick = CryptoTick("BTC", 100.4, 1250, "test")
+    window.add(tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 5
+    position.shares["Up"] = 5 / 0.40
+    position.cost["Down"] = 3
+    position.shares["Down"] = 3 / 0.40
+
+    signal = strategy.build_signal(m, tick, window)
+    intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
+
+    assert intents
+    assert intents[0].outcome == "Down"
+
+
+def test_jetfadil_reserves_normal_expansion_for_late_window() -> None:
+    strategy = JetFadilStrategy(
+        StrategyConfig(
+            strategy_mode="jetfadil",
+            profit_expansion_pair_cost=1.00,
+            jetfadil_pre_late_expansion_pair_cost=0.85,
+            jetfadil_late_expansion_seconds=240,
+            jetfadil_strong_tilt_confidence=0.20,
+        ),
+        RiskConfig(max_market_notional=24, max_single_fill_notional=4, max_unpaired_notional=6),
+    )
+    window = PriceWindow()
+    m = market()
+    window.add(CryptoTick("BTC", 100.0, 1000, "test"))
+    mid_tick = CryptoTick("BTC", 100.4, 1200, "test")
+    late_tick = CryptoTick("BTC", 100.4, 1250, "test")
+    window.add(mid_tick)
+    position = Position(m.slug, m.condition_id)
+    position.cost["Up"] = 10
+    position.shares["Up"] = 10 / 0.48
+    position.cost["Down"] = 10
+    position.shares["Down"] = 10 / 0.48
+
+    mid_signal = strategy.build_signal(m, mid_tick, window)
+    late_signal = strategy.build_signal(m, late_tick, window)
+    mid_intents = strategy.propose_orders(m, position, mid_signal, {"Up": book("up", 0.48), "Down": book("down", 0.48)})
+    late_intents = strategy.propose_orders(m, position, late_signal, {"Up": book("up", 0.48), "Down": book("down", 0.48)})
+
+    assert not mid_intents
+    assert late_intents
+
+
 def test_jetfadil_scales_favored_side_with_controlled_tilt() -> None:
     strategy = JetFadilStrategy(
         StrategyConfig(strategy_mode="jetfadil", profit_expansion_pair_cost=1.00, jetfadil_strong_tilt_confidence=0.20, jetfadil_max_directional_bias=0.20),
@@ -477,10 +590,10 @@ def test_jetfadil_scales_favored_side_with_controlled_tilt() -> None:
     tick = CryptoTick("BTC", 100.4, 1200, "test")
     window.add(tick)
     position = Position(m.slug, m.condition_id)
-    position.cost["Up"] = 8
-    position.shares["Up"] = 8 / 0.40
-    position.cost["Down"] = 8
-    position.shares["Down"] = 8 / 0.40
+    position.cost["Up"] = 10
+    position.shares["Up"] = 10 / 0.40
+    position.cost["Down"] = 10
+    position.shares["Down"] = 10 / 0.40
 
     signal = strategy.build_signal(m, tick, window)
     intents = strategy.propose_orders(m, position, signal, {"Up": book("up", 0.40), "Down": book("down", 0.40)})
