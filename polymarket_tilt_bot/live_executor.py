@@ -25,6 +25,12 @@ class LivePreflight:
     armed: bool
 
 
+@dataclass(frozen=True)
+class LiveBalance:
+    balance: float
+    allowance: float
+
+
 class LiveExecutor:
     """CLOB execution boundary for production mode.
 
@@ -118,9 +124,19 @@ class LiveExecutor:
             kwargs["funder_address"] = kwargs.pop("funder")
             client = sdk.ClobClient(**kwargs)
         if explicit_creds is None:
-            creds = client.create_or_derive_api_key()
+            creds = cls._derive_or_create_api_key(client)
             client.set_api_creds(creds)
         return cls(client=client, sdk=sdk, order_type=order_type, tick_size=tick_size, price_ticks=price_ticks)
+
+    @staticmethod
+    def _derive_or_create_api_key(client: Any):
+        try:
+            return client.derive_api_key()
+        except Exception as derive_exc:
+            try:
+                return client.create_api_key()
+            except Exception as create_exc:
+                raise LiveExecutionError(f"could not derive or create CLOB API key: derive={derive_exc}; create={create_exc}") from create_exc
 
     @classmethod
     def _api_creds_from_env(cls, sdk: Any):
@@ -135,6 +151,15 @@ class LiveExecutor:
             api_key=values["CLOB_API_KEY"],
             api_secret=values["CLOB_SECRET"],
             api_passphrase=values["CLOB_PASS_PHRASE"],
+        )
+
+    def collateral_balance_allowance(self) -> LiveBalance:
+        result = self.client.get_balance_allowance(
+            self.sdk.BalanceAllowanceParams(asset_type=self.sdk.AssetType.COLLATERAL)
+        )
+        return LiveBalance(
+            balance=self._micro_units_to_float(self._response_field(result, "balance")),
+            allowance=self._micro_units_to_float(self._response_field(result, "allowance")),
         )
 
     def execute(self, market: Market, intent: OrderIntent, book: OrderBook, now: float | None = None) -> Fill | None:
@@ -240,3 +265,15 @@ class LiveExecutor:
                 if value is not None:
                     return value
         return None
+
+    @staticmethod
+    def _response_field(response: Any, key: str) -> Any:
+        if isinstance(response, dict):
+            return response.get(key)
+        return getattr(response, key, None)
+
+    @staticmethod
+    def _micro_units_to_float(value: Any) -> float:
+        if value is None:
+            return 0.0
+        return float(Decimal(str(value)) / Decimal("1000000"))

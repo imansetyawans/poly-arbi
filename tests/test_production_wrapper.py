@@ -5,7 +5,7 @@ import pytest
 
 from polymarket_tilt_bot.config import BotConfig, RiskConfig, RuntimeConfig, StrategyConfig
 from polymarket_tilt_bot.ledger import CsvLedger, PositionBook
-from polymarket_tilt_bot.live_executor import LiveExecutor, LiveTradingDisabled
+from polymarket_tilt_bot.live_executor import LiveExecutionError, LiveExecutor, LiveTradingDisabled
 from polymarket_tilt_bot.models import BookLevel, CryptoTick, Market, OrderBook, OrderIntent
 from polymarket_tilt_bot.paper_broker import PaperBroker
 from polymarket_tilt_bot.price_window import PriceWindow
@@ -92,7 +92,7 @@ def test_live_executor_derives_l2_credentials_when_not_supplied(monkeypatch) -> 
             self.kwargs = kwargs
             self.set_creds = None
 
-        def create_or_derive_api_key(self):
+        def derive_api_key(self):
             return FakeCreds()
 
         def set_api_creds(self, creds):
@@ -113,6 +113,55 @@ def test_live_executor_derives_l2_credentials_when_not_supplied(monkeypatch) -> 
     assert isinstance(executor.client.set_creds, FakeCreds)
 
 
+def test_live_executor_creates_l2_credentials_when_derive_fails(monkeypatch) -> None:
+    class FakeCreds:
+        pass
+
+    class FakeSdk:
+        @staticmethod
+        def ApiCreds(**kwargs):
+            return kwargs
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.set_creds = None
+
+        def derive_api_key(self):
+            raise RuntimeError("no existing key")
+
+        def create_api_key(self):
+            return FakeCreds()
+
+        def set_api_creds(self, creds):
+            self.set_creds = creds
+
+    FakeSdk.ClobClient = FakeClient
+    monkeypatch.setenv("POLYBOT_ENABLE_LIVE_TRADING", "YES")
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0xabc")
+    monkeypatch.delenv("CLOB_API_KEY", raising=False)
+    monkeypatch.delenv("CLOB_SECRET", raising=False)
+    monkeypatch.delenv("CLOB_PASS_PHRASE", raising=False)
+    monkeypatch.setattr("polymarket_tilt_bot.live_executor.LiveExecutor.preflight", classmethod(lambda cls: type("Result", (), {"ready": True, "missing_env": (), "sdk_available": True})()))
+    monkeypatch.setitem(__import__("sys").modules, "py_clob_client_v2", FakeSdk)
+
+    executor = LiveExecutor.from_env(RuntimeConfig(), confirmed=True)
+
+    assert isinstance(executor.client.set_creds, FakeCreds)
+
+
+def test_live_executor_reports_key_setup_failure() -> None:
+    class FakeClient:
+        def derive_api_key(self):
+            raise RuntimeError("derive failed")
+
+        def create_api_key(self):
+            raise RuntimeError("create failed")
+
+    with pytest.raises(LiveExecutionError, match="could not derive or create"):
+        LiveExecutor._derive_or_create_api_key(FakeClient())
+
+
 def test_live_executor_uses_cached_l2_credentials_when_supplied(monkeypatch) -> None:
     class FakeSdk:
         @staticmethod
@@ -126,6 +175,12 @@ def test_live_executor_uses_cached_l2_credentials_when_supplied(monkeypatch) -> 
 
         def create_or_derive_api_key(self):
             raise AssertionError("should not derive when cached creds are present")
+
+        def derive_api_key(self):
+            raise AssertionError("should not derive when cached creds are present")
+
+        def create_api_key(self):
+            raise AssertionError("should not create when cached creds are present")
 
         def set_api_creds(self, creds):
             self.set_creds = creds
@@ -143,6 +198,57 @@ def test_live_executor_uses_cached_l2_credentials_when_supplied(monkeypatch) -> 
 
     assert executor.client.kwargs["creds"]["api_key"] == "key"
     assert executor.client.set_creds is None
+
+
+def test_live_executor_reads_collateral_balance_allowance() -> None:
+    class FakeAssetType:
+        COLLATERAL = "COLLATERAL"
+
+    class FakeBalanceAllowanceParams:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeSdk:
+        AssetType = FakeAssetType
+        BalanceAllowanceParams = FakeBalanceAllowanceParams
+
+    class FakeClient:
+        def __init__(self):
+            self.params = None
+
+        def get_balance_allowance(self, params):
+            self.params = params
+            return {"balance": "42500000", "allowance": "100000000"}
+
+    client = FakeClient()
+    executor = LiveExecutor(client, FakeSdk)
+
+    balance = executor.collateral_balance_allowance()
+
+    assert client.params.kwargs == {"asset_type": "COLLATERAL"}
+    assert balance.balance == 42.5
+    assert balance.allowance == 100.0
+
+
+def test_live_account_log_uses_clob_balance_not_local_baseline(caplog) -> None:
+    class FakeBalance:
+        balance = 42.5
+        allowance = 100.0
+
+    class FakeExecutor:
+        def collateral_balance_allowance(self):
+            return FakeBalance()
+
+    bot = PaperTradingBot.__new__(PaperTradingBot)
+    bot.executor = FakeExecutor()
+    bot.config = BotConfig(risk=RiskConfig(starting_balance=300))
+
+    with caplog.at_level("INFO", logger="polymarket_tilt_bot"):
+        bot._log_live_account_state(reserved=0, unrealized=0, realized=0, open_positions=0)
+
+    assert "live account clob_balance=42.50" in caplog.text
+    assert "local_ledger_baseline=300.00" in caplog.text
+    assert "account balance=300.00" not in caplog.text
 
 
 def test_env_file_loader_sets_missing_values_without_overriding_existing(tmp_path, monkeypatch) -> None:

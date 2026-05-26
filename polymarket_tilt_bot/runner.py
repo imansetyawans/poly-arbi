@@ -55,7 +55,8 @@ class PaperTradingBot:
         self.ledger.close()
 
     def run(self) -> None:
-        LOGGER.info("starting paper bot: assets=%s cycles=%s db=%s", self.config.runtime.assets, self.config.runtime.cycles, self.config.runtime.database_path)
+        execution_mode = getattr(self, "execution_mode", "paper")
+        LOGGER.info("starting %s bot: assets=%s cycles=%s db=%s", execution_mode, self.config.runtime.assets, self.config.runtime.cycles, self.config.runtime.database_path)
         try:
             self._try_resolve_finished_positions(force=True)
             cycle = 0
@@ -190,16 +191,44 @@ class PaperTradingBot:
         reserved = sum(position.total_cost for position in positions)
         unrealized = self._estimate_unrealized_pnl(positions)
         realized = self.ledger.realized_pnl()
+        if getattr(self, "execution_mode", "paper") == "live":
+            self._log_live_account_state(reserved, unrealized, realized, len(positions))
+            return
         balance = self.config.risk.starting_balance + realized - reserved
         equity = self.config.risk.starting_balance + realized + unrealized
         LOGGER.info(
-            "account balance=%.2f equity=%.2f realized_pnl=%.2f unrealized_pnl=%.2f reserved=%.2f open_positions=%s",
+            "paper account balance=%.2f equity=%.2f realized_pnl=%.2f unrealized_pnl=%.2f reserved=%.2f open_positions=%s",
             balance,
             equity,
             realized,
             unrealized,
             reserved,
             len(positions),
+        )
+
+    def _log_live_account_state(self, reserved: float, unrealized: float, realized: float, open_positions: int) -> None:
+        try:
+            balance = self.executor.collateral_balance_allowance()
+        except Exception as exc:
+            LOGGER.warning(
+                "live account balance unavailable: %s; local_ledger baseline=%.2f realized_pnl=%.2f unrealized_pnl=%.2f reserved=%.2f open_positions=%s",
+                exc,
+                self.config.risk.starting_balance,
+                realized,
+                unrealized,
+                reserved,
+                open_positions,
+            )
+            return
+        LOGGER.info(
+            "live account clob_balance=%.2f clob_allowance=%.2f local_ledger_baseline=%.2f realized_pnl=%.2f unrealized_pnl=%.2f reserved=%.2f open_positions=%s",
+            balance.balance,
+            balance.allowance,
+            self.config.risk.starting_balance,
+            realized,
+            unrealized,
+            reserved,
+            open_positions,
         )
 
     def _open_positions(self):

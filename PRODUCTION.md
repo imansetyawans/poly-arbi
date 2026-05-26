@@ -74,6 +74,14 @@ POLYBOT_LIVE_TICK_SIZE=0.01
 POLYBOT_LIVE_PRICE_TICKS=1
 ```
 
+Live account logs use the authenticated CLOB balance endpoint:
+
+```text
+live account clob_balance=42.50 clob_allowance=100.00 local_ledger_baseline=300.00 ...
+```
+
+`clob_balance` is your real Polymarket collateral balance. `local_ledger_baseline` comes from `POLYBOT_BALANCE` and is only for local PnL bookkeeping.
+
 ## Before Leaving It Running
 
 1. Confirm `preflight-live` says `Ready: True`.

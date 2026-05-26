@@ -85,7 +85,7 @@ POLYBOT_LIVE_PRICE_TICKS=1
 
 Important notes:
 
-- `POLYBOT_BALANCE` is the bot's local accounting baseline. Your real spend is controlled by the wallet funds plus `POLYBOT_MAX_MARKET_NOTIONAL`, `POLYBOT_MAX_SINGLE_FILL`, and `POLYBOT_MAX_UNPAIRED_NOTIONAL`.
+- `POLYBOT_BALANCE` is only the bot's local ledger baseline. In live mode the log also prints `clob_balance` and `clob_allowance` from Polymarket; your real spend is controlled by those funds plus `POLYBOT_MAX_MARKET_NOTIONAL`, `POLYBOT_MAX_SINGLE_FILL`, and `POLYBOT_MAX_UNPAIRED_NOTIONAL`.
 - Command-line flags override env values, so `--cycles 2` is useful for smoke tests even when `POLYBOT_CYCLES=0`.
 - `CLOB_API_KEY`, `CLOB_SECRET`, and `CLOB_PASS_PHRASE` are optional cached Polymarket L2 credentials. If they are not set, the bot derives them from `POLYMARKET_PRIVATE_KEY` at startup.
 - `.env.live` should stay local. Do not commit it.
@@ -168,6 +168,14 @@ resolutions.csv
 ```
 
 `orders.csv` records every live or paper execution attempt, including status, limit price, notional, and reason. `fills.csv` records matched fills. `run_manifest.json` captures the runtime, risk, and strategy config used for that run.
+
+In live mode, account logs look like:
+
+```text
+live account clob_balance=42.50 clob_allowance=100.00 local_ledger_baseline=300.00 realized_pnl=0.00 unrealized_pnl=0.00 reserved=0.00 open_positions=0
+```
+
+`clob_balance` is the actual authenticated Polymarket collateral balance returned by the CLOB API. `local_ledger_baseline` is just the starting value used for local PnL bookkeeping.
 
 ## Strategy Modes
 
