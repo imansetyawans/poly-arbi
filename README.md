@@ -1,177 +1,184 @@
-# Poly Arbi: Polymarket CSV Paper Bot
+# Poly Arbi: Polymarket JetFadil Bot
 
-This is a paper-first Python bot based on the JetFadil account analysis in `jetfadil_polymarket_report.md`.
+Python bot for Polymarket crypto 5-minute Up/Down markets. The current production setup keeps the profitable JetFadil strategy config in environment variables, supports paper rehearsal, and has a guarded live CLOB execution path.
 
-The default strategy is now adaptive two-sided inventory:
+The strategy logic is still the same profitable v4 shape. The production changes are around launch safety, env configuration, order execution, and audit logs.
 
-1. Watch live BTC/ETH 5-minute Up/Down markets.
-2. Track the live Binance WebSocket trade price versus the market's opening/reference price.
-3. Buy both outcomes only when the pair cost is acceptable.
-4. Complete the missing side first and keep directional bias small.
-5. Cap one-sided starter exposure and rebalance late instead of stacking unfinished positions.
-6. Hold through resolution and decompose PnL into paired hedge PnL and unpaired directional PnL.
+## Quick Start
 
-This repository intentionally ships in paper mode. It does not place real orders.
-The live execution boundary exists only as a disabled placeholder.
-
-## Install
+Install dependencies:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-## Scan Current Markets
+Create your local production env file:
+
+```powershell
+Copy-Item .env.example .env.live
+notepad .env.live
+```
+
+Fill at least this value before live trading:
+
+```text
+POLYMARKET_PRIVATE_KEY=your_private_key_here
+```
+
+Then check the live setup:
+
+```powershell
+python -m polymarket_tilt_bot preflight-live --env-file .env.live --verbose
+```
+
+Run a short paper rehearsal using the same env-backed config:
+
+```powershell
+python -m polymarket_tilt_bot run-paper --env-file .env.live --db paper_trades_jetfadil_prod_rehearsal --cycles 2
+```
+
+Run a short live smoke test:
+
+```powershell
+python -m polymarket_tilt_bot run-live --env-file .env.live --i-understand-live-risk --cycles 2
+```
+
+Run live continuously after the smoke test looks correct:
+
+```powershell
+python -m polymarket_tilt_bot run-live --env-file .env.live --i-understand-live-risk
+```
+
+Stop the bot with `Ctrl+C`.
+
+## Recommended Live Env
+
+`.env.example` already contains the latest JetFadil v4 production config from the profitable paper run:
+
+```text
+POLYBOT_ASSETS=BTC
+POLYBOT_CYCLES=0
+POLYBOT_POLL_SECONDS=3
+POLYBOT_DB=live_trades_jetfadil_prod
+POLYBOT_STORAGE=csv
+POLYBOT_STRATEGY_MODE=jetfadil
+POLYBOT_BALANCE=300
+POLYBOT_MAX_MARKET_NOTIONAL=18
+POLYBOT_MAX_SINGLE_FILL=3
+POLYBOT_MAX_UNPAIRED_NOTIONAL=2
+POLYBOT_PROFIT_EXPANSION_PAIR_COST=0.98
+POLYBOT_JETFADIL_ENTRY_PAIR_COST=0.98
+POLYBOT_JETFADIL_EARLY_ENTRY_PAIR_COST=0.95
+POLYBOT_JETFADIL_DEEP_VALUE_PAIR_COST=0.95
+POLYBOT_JETFADIL_MIN_ENTRY_SECONDS=60
+POLYBOT_JETFADIL_MIN_CONFIDENCE=0.05
+POLYBOT_JETFADIL_STRONG_TILT_CONFIDENCE=0.50
+POLYBOT_JETFADIL_MAX_DIRECTIONAL_BIAS=0.10
+POLYBOT_JETFADIL_STARTER_ENTRY_CUTOFF_SECONDS=240
+POLYBOT_JETFADIL_CORE_PAIR_FRACTION=0.80
+POLYBOT_JETFADIL_PRE_LATE_EXPANSION_PAIR_COST=0.85
+POLYBOT_JETFADIL_LATE_EXPANSION_SECONDS=240
+POLYBOT_LIVE_ORDER_TYPE=FAK
+POLYBOT_LIVE_TICK_SIZE=0.01
+POLYBOT_LIVE_PRICE_TICKS=1
+```
+
+Important notes:
+
+- `POLYBOT_BALANCE` is the bot's local accounting baseline. Your real spend is controlled by the wallet funds plus `POLYBOT_MAX_MARKET_NOTIONAL`, `POLYBOT_MAX_SINGLE_FILL`, and `POLYBOT_MAX_UNPAIRED_NOTIONAL`.
+- Command-line flags override env values, so `--cycles 2` is useful for smoke tests even when `POLYBOT_CYCLES=0`.
+- `CLOB_API_KEY`, `CLOB_SECRET`, and `CLOB_PASS_PHRASE` are optional cached Polymarket L2 credentials. If they are not set, the bot derives them from `POLYMARKET_PRIVATE_KEY` at startup.
+- `.env.live` should stay local. Do not commit it.
+
+## Live Order Behavior
+
+Live mode uses Polymarket CLOB orders through `py-clob-client-v2`.
+
+Default production execution:
+
+```text
+POLYBOT_LIVE_ORDER_TYPE=FAK
+POLYBOT_LIVE_TICK_SIZE=0.01
+POLYBOT_LIVE_PRICE_TICKS=1
+```
+
+That means the bot tries to fill available liquidity immediately and cancels anything unfilled. It may add a small 1-tick buffer to the current ask for better matching, but it never submits a price above the strategy's own limit price. The code rejects live tick buffers above 2.
+
+If volatility moves the book above the strategy limit, the order is skipped instead of chasing.
+
+## Safety Gates
+
+Live trading is double-armed:
+
+1. `.env.live` must contain `POLYBOT_ENABLE_LIVE_TRADING=YES`.
+2. The command must include `--i-understand-live-risk`.
+
+Before leaving the bot running:
+
+1. Run `preflight-live` and confirm `Ready: True`.
+2. Run paper with `--cycles 2`.
+3. Run live with `--cycles 2`.
+4. Inspect `orders.csv`, `fills.csv`, `resolutions.csv`, and `run_manifest.json`.
+5. Start continuous live only after the audit files look correct.
+
+To disarm live trading in the current shell:
+
+```powershell
+Remove-Item Env:\POLYBOT_ENABLE_LIVE_TRADING
+```
+
+## Useful Commands
+
+Scan current BTC and ETH markets:
 
 ```powershell
 python -m polymarket_tilt_bot scan-once --assets BTC,ETH
 ```
 
-## Run Paper Trading
-
-```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 120 --poll-seconds 5 --db paper_trades_csv --balance 1000 --max-market-notional 100 --max-single-fill 10
-```
-
-Use `--cycles 0` to run continuously until you stop it with `Ctrl+C`:
-
-```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_csv --balance 1000 --max-market-notional 100 --max-single-fill 10
-```
-
-Recommended small-balance balanced scale-in paper run:
-
-```powershell
-python -m polymarket_tilt_bot run-paper --assets BTC,ETH --cycles 0 --poll-seconds 5 --db paper_trades_balanced --storage csv --strategy-mode hedged-mm --balance 1000 --max-market-notional 12 --max-single-fill 2 --max-unpaired-notional 2 --profit-expansion-pair-cost 1.00
-```
-
-Recommended JetFadil-style paper run:
+Run paper without live keys:
 
 ```powershell
 python -m polymarket_tilt_bot run-paper --assets BTC --cycles 0 --poll-seconds 3 --db paper_trades_jetfadil_v4 --storage csv --strategy-mode jetfadil --balance 300 --max-market-notional 18 --max-single-fill 3 --max-unpaired-notional 2 --profit-expansion-pair-cost 0.98 --jetfadil-entry-pair-cost 0.98 --jetfadil-early-entry-pair-cost 0.95 --jetfadil-deep-value-pair-cost 0.95 --jetfadil-min-entry-seconds 60 --jetfadil-min-confidence 0.05 --jetfadil-strong-tilt-confidence 0.50 --jetfadil-max-directional-bias 0.10 --jetfadil-starter-entry-cutoff-seconds 240 --jetfadil-core-pair-fraction 0.80 --jetfadil-pre-late-expansion-pair-cost 0.85 --jetfadil-late-expansion-seconds 240
 ```
 
-Useful strategy/storage flags:
-
-```text
---strategy-mode hedged-mm   # default, adaptive two-sided inventory with small bias
---strategy-mode pair-only   # stricter, targets equal Up/Down cost
---strategy-mode jetfadil    # more aggressive paired bursts with controlled directional tilt
---strategy-mode current     # old hedged-tilt behavior
---storage csv               # default, writes separate CSV files in the --db folder
---storage sqlite            # legacy SQLite support
-```
-
-One-sided risk controls are enabled by default:
-
-```text
---max-unpaired-notional             # defaults to min(max single fill, 25% of market cap)
---min-order-notional 1              # reject paper orders/fills below Polymarket's $1 minimum
---starter-entry-cutoff-seconds 90   # stop opening fresh flat positions after this elapsed time
---completion-pair-cost-mid 1.05     # missing-side repair tolerance after 120s
---completion-pair-cost-late 1.08    # missing-side repair tolerance after 180s
---profit-expansion-pair-cost 1.00   # add size after both sides exist only when projected pair cost is attractive
---jetfadil-entry-pair-cost 1.00     # JetFadil mode flat-entry pair ceiling
---jetfadil-min-entry-seconds 5      # wait for early candle information unless the pair is very cheap
---jetfadil-min-confidence .05       # require a small signal unless the pair is deep value
---jetfadil-strong-tilt-confidence .35 # only add directional tilt when confidence is strong
---jetfadil-starter-entry-cutoff-seconds 240 # avoid fresh JetFadil starters in the final minute
---jetfadil-core-pair-fraction .80   # build this much matched paired cost before allowing tilt
---jetfadil-pre-late-expansion-pair-cost .85 # require deep value before normal last-minute expansion
---jetfadil-late-expansion-seconds 240 # relax back to profit-expansion threshold in the final minute
---resolution-grace-seconds 20       # wait this long after market end before settlement checks
---resolution-poll-seconds 30        # throttle automatic settlement checks while the bot runs
---bad-regime-window 20              # recent resolved markets to inspect
---bad-regime-min-completion-rate .5 # pause new entries below this completion rate
---disable-bad-regime-guard          # keep completion rules but disable new-entry pause
-```
-
-## Resolution And Daily PnL
-
-The bot resolves paper positions from real Polymarket market outcomes via Gamma after the 5-minute market has ended. In CSV mode it records the winning outcome and PnL decomposition in `resolutions.csv`.
-Resolution checks run on startup, during bot cycles, and on shutdown. If the bot was stopped before outcomes were posted, backfill missing settlements with:
+Backfill missing market resolutions:
 
 ```powershell
-python -m polymarket_tilt_bot resolve-missing --db paper_trades_csv --storage csv
+python -m polymarket_tilt_bot resolve-missing --db paper_trades_jetfadil_v4 --storage csv
 ```
 
-Print a report for all resolved markets:
+Print the PnL report:
 
 ```powershell
-python -m polymarket_tilt_bot daily-report --db paper_trades_csv
+python -m polymarket_tilt_bot daily-report --db paper_trades_jetfadil_v4 --storage csv
 ```
 
-Print a UTC-date filtered report:
+## Output Files
 
-```powershell
-python -m polymarket_tilt_bot daily-report --db paper_trades_csv --date 2026-04-26
-```
-
-The report includes total cost, total PnL, ROI, winner, pair cost, paired hedge PnL, and unpaired tilt PnL per market.
-It also prints both-sided completion rate, both-sided PnL, one-sided PnL, failed one-sided markets, one-sided average loss, scaled both-sided PnL, expensive both-sided markets, max drawdown, and PnL buckets by last-fill timing and total cost.
-
-Every cycle, the bot logs the current Polymarket odds and your paper position:
+CSV storage writes these files inside the folder named by `POLYBOT_DB` or `--db`:
 
 ```text
-state btc-updown-5m-... odds up_bid=0.520 up_ask=0.540 down_bid=0.460 down_ask=0.480 signal=Up p_up=0.631 pos_up=10.00 pos_down=8.00 cost=9.50 unpaired=Up 2.00
+run_manifest.json
+markets.csv
+signals.csv
+orderbook_snapshots.csv
+orders.csv
+fills.csv
+resolutions.csv
 ```
 
-It also logs paper account state every cycle:
+`orders.csv` records every live or paper execution attempt, including status, limit price, notional, and reason. `fills.csv` records matched fills. `run_manifest.json` captures the runtime, risk, and strategy config used for that run.
+
+## Strategy Modes
 
 ```text
-account balance=940.00 equity=1003.24 realized_pnl=10.34 unrealized_pnl=-7.10 reserved=70.34 open_positions=1
+--strategy-mode jetfadil   # production JetFadil-style paired bursts with controlled tilt
+--strategy-mode hedged-mm  # adaptive two-sided inventory with small bias
+--strategy-mode pair-only  # stricter equal Up/Down cost targeting
+--strategy-mode current    # old hedged-tilt behavior
 ```
 
-Definitions:
-
-- `balance`: starting simulation balance + realized PnL - capital reserved in unresolved paper positions.
-- `equity`: starting simulation balance + realized PnL + mark-to-market unrealized PnL.
-- `reserved`: paper cost still locked in unresolved markets.
-- `unrealized_pnl`: estimated open-position value using current Polymarket best bids.
-
-The bot records:
-
-- `markets`
-- `signals`
-- `orderbook_snapshots`
-- `fills`
-- `resolutions`
-
-into the SQLite database you pass with `--db`.
-into CSV files in the folder you pass with `--db`.
-
-## Strategy Summary
-
-The default `hedged-mm` strategy implements the lesson from paper testing:
-
-```text
-complete both sides
-avoid one-sided inventory
-rebalance late
-use momentum only as a small inventory bias
-```
-
-It skips flat markets when `Up ask + Down ask` is too expensive, prioritizes the missing side after the first fill, blocks repeated same-side stacking above the one-sided cap, and avoids chasing very expensive odds unless needed to complete inventory.
-
-Balanced scale-in separates repair from profit expansion:
-
-```text
-repair mode: buy the missing side to reduce naked exposure, using the completion thresholds
-profit expansion: add more size only if projected Up avg + projected Down avg <= profit expansion limit
-```
-
-With the recommended small settings, the intended path is:
-
-```text
-$2 / $0  -> starter only
-$2 / $2  -> hedge formed
-$4 / $4  -> quality scale
-$6 / $4  -> allowed slight bias
-$6 / $6  -> balanced full size
-```
-
-It avoids patterns like `$6 / $0` and avoids expensive balanced pairs like `0.55 + 0.52 = 1.07`.
-
-`jetfadil` mode is more aggressive than `hedged-mm`: it only starts when the pair is acceptable, places both sides in the same cycle, builds a matched paired core before allowing tilt, uses stricter non-late expansion rules, and keeps broader expansion for the final minute when the pair is still attractive. This mode is meant for paper testing JetFadil-like behavior, not for maximum capital protection.
+The production env uses `jetfadil`.
 
 ## Project Layout
 
@@ -179,34 +186,26 @@ It avoids patterns like `$6 / $0` and avoids expensive balanced pairs like `0.55
 polymarket_tilt_bot/
   clients.py          # Polymarket Gamma/CLOB and public price clients
   market_scanner.py   # Finds active BTC/ETH 5-minute markets
-  strategy.py         # Hedged MM / pair-only / legacy strategy logic
+  strategy.py         # Hedged MM, pair-only, legacy, and JetFadil strategy logic
   paper_broker.py     # Conservative simulated fills against live asks
-  ledger.py           # CSV-first market/signal/fill/resolution logging
+  ledger.py           # CSV/SQLite market, signal, order, fill, and resolution logging
   resolution.py       # Reads resolved winners from Gamma
-  live_executor.py    # Disabled live-trading boundary
-  runner.py           # CLI
+  live_executor.py    # Guarded signed live CLOB execution
+  runner.py           # CLI and env-backed runtime config
 tests/
 ```
 
-## Important Data Warning
+## Data Warning
 
-Polymarket states these markets resolve from Chainlink BTC/USD or ETH/USD data streams. The default price client now uses Binance public market-data WebSocket trade streams at `wss://data-stream.binance.vision`, which are faster and do not require API keys, but still are not the exact Chainlink resolution feed. Before live trading, replace or validate this against the exact resolution feed or a professional low-latency source aligned to Chainlink.
+Polymarket crypto 5-minute markets resolve from Chainlink BTC/USD or ETH/USD data streams. The default signal client uses Binance public market-data WebSocket trade streams, which are fast and require no API keys, but they are not the exact Chainlink resolution feed. Validate this before increasing live size.
 
-No `.env` file is required for paper mode.
+## More Detail
 
-## Safety Defaults
-
-The defaults are deliberately small:
-
-- max market notional: `$100`
-- max single simulated fill: `$10`
-- no new entries in the final 15 seconds
-- live execution is not implemented
-
-For small-balance paper tests, `$1-$2` single fills are supported when the order would still meet Polymarket's minimum order notional and share size. For example, `$2` at `0.20` odds buys about `10` shares, while `$2` at `0.80` odds buys only `2.5` shares and may be skipped. Any order below `$1` is skipped even when the share count would be large enough.
+Read `PRODUCTION.md` for the full launch checklist and kill-switch notes.
 
 ## Tests
 
 ```powershell
 pytest -q
+python -m compileall -q polymarket_tilt_bot tests
 ```

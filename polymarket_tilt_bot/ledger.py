@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Literal
 
-from .models import Fill, Market, Position, Signal
+from .models import Fill, Market, OrderIntent, Position, Signal
 
 
 class PositionBook:
@@ -268,6 +268,20 @@ class SQLiteLedger:
                 timestamp REAL NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market_slug TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                token_id TEXT NOT NULL,
+                max_notional REAL NOT NULL,
+                limit_price REAL NOT NULL,
+                timestamp REAL NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT NOT NULL,
+                reason TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS resolutions (
                 market_slug TEXT PRIMARY KEY,
                 winner TEXT NOT NULL,
@@ -400,6 +414,29 @@ class SQLiteLedger:
         )
         self.conn.commit()
 
+    def record_order_attempt(self, intent: OrderIntent, timestamp: float, mode: str, status: str, message: str = "") -> None:
+        self.conn.execute(
+            """
+            INSERT INTO orders (
+                market_slug, outcome, token_id, max_notional, limit_price,
+                timestamp, mode, status, message, reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent.market_slug,
+                intent.outcome,
+                intent.token_id,
+                intent.max_notional,
+                intent.limit_price,
+                timestamp,
+                mode,
+                status,
+                message,
+                intent.reason,
+            ),
+        )
+        self.conn.commit()
+
     def record_resolution(self, position: Position, winner: Literal["Up", "Down"], timestamp: float) -> dict[str, object]:
         result = position.resolve(winner)
         self.conn.execute(
@@ -500,6 +537,7 @@ class CsvLedger:
             "signals": self.path / "signals.csv",
             "fills": self.path / "fills.csv",
             "orderbook_snapshots": self.path / "orderbook_snapshots.csv",
+            "orders": self.path / "orders.csv",
             "resolutions": self.path / "resolutions.csv",
         }
         self.headers = {
@@ -507,6 +545,7 @@ class CsvLedger:
             "signals": ["market_slug", "timestamp", "probability_up", "confidence", "direction", "seconds_elapsed", "seconds_remaining", "distance_bps", "momentum_bps", "reason"],
             "fills": ["market_slug", "condition_id", "outcome", "token_id", "price", "size", "notional", "timestamp", "simulated", "reason"],
             "orderbook_snapshots": ["market_slug", "outcome", "token_id", "best_bid", "best_ask", "bid_depth", "ask_depth", "timestamp"],
+            "orders": ["market_slug", "outcome", "token_id", "max_notional", "limit_price", "timestamp", "mode", "status", "message", "reason"],
             "resolutions": ["market_slug", "winner", "result_json", "timestamp"],
         }
         for name, file in self.files.items():
@@ -612,6 +651,20 @@ class CsvLedger:
                 "timestamp": timestamp,
             })
         self._append("orderbook_snapshots", rows)
+
+    def record_order_attempt(self, intent: OrderIntent, timestamp: float, mode: str, status: str, message: str = "") -> None:
+        self._append("orders", [{
+            "market_slug": intent.market_slug,
+            "outcome": intent.outcome,
+            "token_id": intent.token_id,
+            "max_notional": intent.max_notional,
+            "limit_price": intent.limit_price,
+            "timestamp": timestamp,
+            "mode": mode,
+            "status": status,
+            "message": message,
+            "reason": intent.reason,
+        }])
 
     def record_resolution(self, position: Position, winner: Literal["Up", "Down"], timestamp: float) -> dict[str, object]:
         result = position.resolve(winner)
