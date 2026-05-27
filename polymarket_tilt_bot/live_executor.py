@@ -63,6 +63,11 @@ class LiveExecutor:
     @classmethod
     def preflight(cls) -> LivePreflight:
         missing = [name for name in cls.REQUIRED_ENV if not os.getenv(name)]
+        signature_type = os.getenv("POLYMARKET_SIGNATURE_TYPE", "0").strip() or "0"
+        if signature_type not in {"0", "1", "2", "3"}:
+            missing.append("POLYMARKET_SIGNATURE_TYPE must be 0, 1, 2, or 3")
+        if signature_type in {"1", "2", "3"} and not os.getenv("POLYMARKET_FUNDER_ADDRESS"):
+            missing.append("POLYMARKET_FUNDER_ADDRESS")
         partial_creds = [name for name in cls.API_CRED_ENV if os.getenv(name)]
         if partial_creds and len(partial_creds) != len(cls.API_CRED_ENV):
             missing.extend(name for name in cls.API_CRED_ENV if not os.getenv(name))

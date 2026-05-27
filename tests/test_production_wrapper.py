@@ -78,6 +78,47 @@ def test_live_preflight_rejects_partial_cached_l2_credentials(monkeypatch) -> No
     assert "CLOB_PASS_PHRASE" in result.missing_env
 
 
+def test_live_preflight_requires_funder_for_deposit_wallet_signature_type(monkeypatch) -> None:
+    monkeypatch.setenv("POLYBOT_ENABLE_LIVE_TRADING", "YES")
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0xabc")
+    monkeypatch.setenv("POLYMARKET_SIGNATURE_TYPE", "3")
+    monkeypatch.delenv("POLYMARKET_FUNDER_ADDRESS", raising=False)
+    monkeypatch.delenv("CLOB_API_KEY", raising=False)
+    monkeypatch.delenv("CLOB_SECRET", raising=False)
+    monkeypatch.delenv("CLOB_PASS_PHRASE", raising=False)
+
+    result = LiveExecutor.preflight()
+
+    assert result.ready is False
+    assert "POLYMARKET_FUNDER_ADDRESS" in result.missing_env
+
+
+def test_live_preflight_accepts_deposit_wallet_signature_type_with_funder(monkeypatch) -> None:
+    monkeypatch.setenv("POLYBOT_ENABLE_LIVE_TRADING", "YES")
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0xabc")
+    monkeypatch.setenv("POLYMARKET_SIGNATURE_TYPE", "3")
+    monkeypatch.setenv("POLYMARKET_FUNDER_ADDRESS", "0xdeposit")
+    monkeypatch.delenv("CLOB_API_KEY", raising=False)
+    monkeypatch.delenv("CLOB_SECRET", raising=False)
+    monkeypatch.delenv("CLOB_PASS_PHRASE", raising=False)
+
+    result = LiveExecutor.preflight()
+
+    assert result.ready is True
+    assert result.missing_env == ()
+
+
+def test_live_preflight_rejects_invalid_signature_type(monkeypatch) -> None:
+    monkeypatch.setenv("POLYBOT_ENABLE_LIVE_TRADING", "YES")
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0xabc")
+    monkeypatch.setenv("POLYMARKET_SIGNATURE_TYPE", "9")
+
+    result = LiveExecutor.preflight()
+
+    assert result.ready is False
+    assert "POLYMARKET_SIGNATURE_TYPE must be 0, 1, 2, or 3" in result.missing_env
+
+
 def test_live_executor_derives_l2_credentials_when_not_supplied(monkeypatch) -> None:
     class FakeCreds:
         pass

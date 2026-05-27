@@ -23,6 +23,8 @@ Fill at least this value before live trading:
 
 ```text
 POLYMARKET_PRIVATE_KEY=your_private_key_here
+POLYMARKET_SIGNATURE_TYPE=3
+POLYMARKET_FUNDER_ADDRESS=0x_your_polymarket_deposit_wallet
 ```
 
 Then check the live setup:
@@ -62,6 +64,8 @@ POLYBOT_POLL_SECONDS=3
 POLYBOT_DB=live_trades_jetfadil_prod
 POLYBOT_STORAGE=csv
 POLYBOT_STRATEGY_MODE=jetfadil
+POLYMARKET_SIGNATURE_TYPE=3
+POLYMARKET_FUNDER_ADDRESS=0x_your_polymarket_deposit_wallet
 POLYBOT_BALANCE=300
 POLYBOT_MAX_MARKET_NOTIONAL=18
 POLYBOT_MAX_SINGLE_FILL=3
@@ -87,6 +91,7 @@ Important notes:
 
 - `POLYBOT_BALANCE` is only the bot's local ledger baseline. In live mode the log also prints `clob_balance` and `clob_allowance` from Polymarket; your real spend is controlled by those funds plus `POLYBOT_MAX_MARKET_NOTIONAL`, `POLYBOT_MAX_SINGLE_FILL`, and `POLYBOT_MAX_UNPAIRED_NOTIONAL`.
 - Command-line flags override env values, so `--cycles 2` is useful for smoke tests even when `POLYBOT_CYCLES=0`.
+- `POLYMARKET_SIGNATURE_TYPE=3` means deposit-wallet mode. `POLYMARKET_PRIVATE_KEY` signs as the owner/session signer, while `POLYMARKET_FUNDER_ADDRESS` is the deposit wallet that holds the collateral.
 - `CLOB_API_KEY`, `CLOB_SECRET`, and `CLOB_PASS_PHRASE` are optional cached Polymarket L2 credentials. If they are not set, the bot derives them from `POLYMARKET_PRIVATE_KEY` at startup.
 - `.env.live` should stay local. Do not commit it.
 

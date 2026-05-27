@@ -36,13 +36,15 @@ $env:POLYMARKET_PRIVATE_KEY="..."
 
 `CLOB_API_KEY`, `CLOB_SECRET`, and `CLOB_PASS_PHRASE` are optional cached L2 API credentials. If they are not supplied, the bot uses `py-clob-client-v2` to derive them from `POLYMARKET_PRIVATE_KEY` at startup. If you do supply cached L2 credentials, provide all three.
 
-Optional proxy/safe wallet settings:
+Recommended production wallet settings for Polymarket deposit wallet / `POLY_1271`:
 
 ```powershell
-$env:POLYMARKET_SIGNATURE_TYPE="1"
-$env:POLYMARKET_FUNDER_ADDRESS="0x..."
+$env:POLYMARKET_SIGNATURE_TYPE="3"
+$env:POLYMARKET_FUNDER_ADDRESS="0x_your_polymarket_deposit_wallet"
 $env:POLYMARKET_CHAIN_ID="137"
 ```
+
+For type `3`, `POLYMARKET_PRIVATE_KEY` is the owner/session signer key. `POLYMARKET_FUNDER_ADDRESS` is the deposit wallet address that holds collateral.
 
 Run the preflight before live trading:
 
